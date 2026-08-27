@@ -1,0 +1,19 @@
+id: spi_master_001
+category: digital
+pdk: sky130
+supply: 1.8
+topology_hint: spi_master
+description: SPI master (mode 0)
+specs:
+  correct_protocol:
+    target: 1
+    weight: 1.0
+    unit: bool
+  configurable_clock_div:
+    target: 1
+    weight: 1.0
+    unit: bool
+corners: [tt, ss, ff, sf, fs]
+temp_range: [-40, 125]
+pass_criteria: all_corners
+difficulty: medium

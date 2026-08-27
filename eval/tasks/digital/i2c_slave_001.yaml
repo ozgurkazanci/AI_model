@@ -1,0 +1,23 @@
+id: i2c_slave_001
+category: digital
+pdk: sky130
+supply: 1.8
+topology_hint: i2c_slave
+description: I2C slave (7-bit address)
+specs:
+  correct_ack:
+    target: 1
+    weight: 1.0
+    unit: bool
+  clock_stretching:
+    target: 1
+    weight: 1.0
+    unit: bool
+  multi_byte:
+    target: 1
+    weight: 1.0
+    unit: bool
+corners: [tt, ss, ff, sf, fs]
+temp_range: [-40, 125]
+pass_criteria: all_corners
+difficulty: hard

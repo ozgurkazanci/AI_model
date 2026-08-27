@@ -1,0 +1,28 @@
+id: variable_gain_amp_001
+category: analog
+pdk: sky130
+supply: 1.8
+topology_hint: variable_gain_amplifier
+load: 1pF
+description: Variable gain amplifier
+specs:
+  gain_min:
+    max: -10
+    weight: 1.0
+    unit: dB
+  gain_max:
+    min: 30
+    weight: 1.0
+    unit: dB
+  bw:
+    min: 100
+    weight: 1.0
+    unit: MHz
+  linearity:
+    max: 1
+    weight: 1.0
+    unit: dB
+corners: [tt, ss, ff, sf, fs]
+temp_range: [-40, 125]
+pass_criteria: all_corners
+difficulty: hard

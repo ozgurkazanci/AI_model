@@ -1,0 +1,23 @@
+id: fifo_async_001
+category: digital
+pdk: sky130
+supply: 1.8
+topology_hint: async_fifo
+description: Asynchronous FIFO (depth 8, width 8)
+specs:
+  no_metastability:
+    target: 1
+    weight: 1.0
+    unit: bool
+  cdc_correct:
+    target: 1
+    weight: 1.0
+    unit: bool
+  gray_code_pointers:
+    target: 1
+    weight: 1.0
+    unit: bool
+corners: [tt, ss, ff, sf, fs]
+temp_range: [-40, 125]
+pass_criteria: all_corners
+difficulty: hard

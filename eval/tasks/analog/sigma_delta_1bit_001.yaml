@@ -1,0 +1,24 @@
+id: sigma_delta_1bit_001
+category: analog
+pdk: sky130
+supply: 1.8
+topology_hint: sigma_delta_modulator
+load: 1pF
+description: 1-bit first-order sigma-delta modulator
+specs:
+  snr:
+    min: 60
+    weight: 1.0
+    unit: dB
+  bw:
+    min: 20
+    weight: 1.0
+    unit: kHz
+  idd:
+    max: 100
+    weight: 1.0
+    unit: uA
+corners: [tt, ss, ff, sf, fs]
+temp_range: [-40, 125]
+pass_criteria: all_corners
+difficulty: hard

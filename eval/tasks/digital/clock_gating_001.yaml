@@ -1,0 +1,19 @@
+id: clock_gating_001
+category: digital
+pdk: sky130
+supply: 1.8
+topology_hint: icg_cell
+description: ICG (integrated clock gating) cell
+specs:
+  glitch_free:
+    target: 1
+    weight: 1.0
+    unit: bool
+  correct_enable_timing:
+    target: 1
+    weight: 1.0
+    unit: bool
+corners: [tt, ss, ff, sf, fs]
+temp_range: [-40, 125]
+pass_criteria: all_corners
+difficulty: easy

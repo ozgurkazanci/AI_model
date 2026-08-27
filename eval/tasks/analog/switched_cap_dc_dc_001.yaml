@@ -1,0 +1,28 @@
+id: switched_cap_dc_dc_001
+category: analog
+pdk: sky130
+supply: 1.8
+topology_hint: switched_cap_voltage_doubler
+load: 1pF
+description: Switched-cap voltage doubler
+specs:
+  vout:
+    target: 3.3
+    weight: 1.0
+    unit: V
+  efficiency:
+    min: 85
+    weight: 1.0
+    unit: "%"
+  iload_max:
+    min: 10
+    weight: 1.0
+    unit: mA
+  ripple:
+    max: 50
+    weight: 1.0
+    unit: mV
+corners: [tt, ss, ff, sf, fs]
+temp_range: [-40, 125]
+pass_criteria: all_corners
+difficulty: hard

@@ -1,0 +1,24 @@
+id: charge_pump_001
+category: analog
+pdk: sky130
+supply: 1.8
+topology_hint: dickson_charge_pump
+load: 1pF
+description: Dickson charge pump
+specs:
+  vout:
+    min: 5
+    weight: 1.0
+    unit: V
+  efficiency:
+    min: 70
+    weight: 1.0
+    unit: "%"
+  iload_max:
+    min: 1
+    weight: 1.0
+    unit: mA
+corners: [tt, ss, ff, sf, fs]
+temp_range: [-40, 125]
+pass_criteria: all_corners
+difficulty: medium

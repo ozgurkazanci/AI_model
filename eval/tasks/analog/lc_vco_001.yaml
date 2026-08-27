@@ -1,0 +1,28 @@
+id: lc_vco_001
+category: analog
+pdk: sky130
+supply: 1.8
+topology_hint: lc_vco
+load: 50fF
+description: LC VCO
+specs:
+  freq:
+    target: 2.4
+    weight: 1.0
+    unit: GHz
+  tuning_range:
+    min: 20
+    weight: 1.0
+    unit: "%"
+  phase_noise:
+    max: -110
+    weight: 1.0
+    unit: dBc/Hz@1MHz
+  idd:
+    max: 3
+    weight: 1.0
+    unit: mA
+corners: [tt, ss, ff, sf, fs]
+temp_range: [-40, 125]
+pass_criteria: all_corners
+difficulty: hard

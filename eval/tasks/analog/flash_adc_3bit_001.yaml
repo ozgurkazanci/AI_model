@@ -1,0 +1,28 @@
+id: flash_adc_3bit_001
+category: analog
+pdk: sky130
+supply: 1.8
+topology_hint: flash_adc
+load: 1pF
+description: 3-bit flash ADC
+specs:
+  enob:
+    min: 2.8
+    weight: 1.0
+    unit: bits
+  sample_rate:
+    min: 500
+    weight: 1.0
+    unit: MHz
+  idd:
+    max: 5
+    weight: 1.0
+    unit: mA
+  inl:
+    max: 0.5
+    weight: 1.0
+    unit: LSB
+corners: [tt, ss, ff, sf, fs]
+temp_range: [-40, 125]
+pass_criteria: all_corners
+difficulty: hard

@@ -1,0 +1,24 @@
+id: ring_osc_3stage_001
+category: analog
+pdk: sky130
+supply: 1.8
+topology_hint: 3_stage_ring_oscillator
+load: 10fF
+description: 3-stage ring oscillator
+specs:
+  freq:
+    target: 1
+    weight: 1.0
+    unit: GHz
+  phase_noise:
+    max: -90
+    weight: 1.0
+    unit: dBc/Hz@1MHz
+  idd:
+    max: 500
+    weight: 1.0
+    unit: uA
+corners: [tt, ss, ff, sf, fs]
+temp_range: [-40, 125]
+pass_criteria: all_corners
+difficulty: easy

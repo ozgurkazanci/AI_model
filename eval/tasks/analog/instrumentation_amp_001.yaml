@@ -1,0 +1,28 @@
+id: instrumentation_amp_001
+category: analog
+pdk: sky130
+supply: 1.8
+topology_hint: instrumentation_amplifier
+load: 1pF
+description: Instrumentation amplifier
+specs:
+  gain:
+    target: 100
+    weight: 1.0
+    unit: V/V
+  cmrr:
+    min: 100
+    weight: 1.0
+    unit: dB
+  offset:
+    max: 100
+    weight: 1.0
+    unit: uV
+  idd:
+    max: 500
+    weight: 1.0
+    unit: uA
+corners: [tt, ss, ff, sf, fs]
+temp_range: [-40, 125]
+pass_criteria: all_corners
+difficulty: medium

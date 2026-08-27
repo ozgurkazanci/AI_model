@@ -1,0 +1,23 @@
+id: arbiter_round_robin_001
+category: digital
+pdk: sky130
+supply: 1.8
+topology_hint: round_robin_arbiter
+description: 4-port round-robin arbiter
+specs:
+  fair_scheduling:
+    target: 1
+    weight: 1.0
+    unit: bool
+  single_grant:
+    target: 1
+    weight: 1.0
+    unit: bool
+  no_starvation:
+    target: 1
+    weight: 1.0
+    unit: bool
+corners: [tt, ss, ff, sf, fs]
+temp_range: [-40, 125]
+pass_criteria: all_corners
+difficulty: medium

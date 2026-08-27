@@ -1,0 +1,19 @@
+id: adder_cla_16bit_001
+category: digital
+pdk: sky130
+supply: 1.8
+topology_hint: carry_lookahead_adder
+description: 16-bit carry look-ahead adder
+specs:
+  correct:
+    target: 1
+    weight: 1.0
+    unit: bool
+  delay:
+    max: 1
+    weight: 1.0
+    unit: ns
+corners: [tt, ss, ff, sf, fs]
+temp_range: [-40, 125]
+pass_criteria: all_corners
+difficulty: medium

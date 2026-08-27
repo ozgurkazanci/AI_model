@@ -1,0 +1,15 @@
+id: shift_register_001
+category: digital
+pdk: sky130
+supply: 1.8
+topology_hint: universal_shift_register
+description: 8-bit universal shift register (SISO/SIPO/PISO/PIPO)
+specs:
+  all_modes_correct:
+    target: 1
+    weight: 1.0
+    unit: bool
+corners: [tt, ss, ff, sf, fs]
+temp_range: [-40, 125]
+pass_criteria: all_corners
+difficulty: medium

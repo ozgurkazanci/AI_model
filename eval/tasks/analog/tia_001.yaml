@@ -1,0 +1,28 @@
+id: tia_001
+category: analog
+pdk: sky130
+supply: 1.8
+topology_hint: transimpedance_amplifier
+load: 50fF
+description: Transimpedance amplifier
+specs:
+  gain:
+    min: 80
+    weight: 1.0
+    unit: dB
+  bw:
+    min: 1
+    weight: 1.0
+    unit: GHz
+  noise:
+    max: 10
+    weight: 1.0
+    unit: pA/sqrt(Hz)
+  idd:
+    max: 2
+    weight: 1.0
+    unit: mA
+corners: [tt, ss, ff, sf, fs]
+temp_range: [-40, 125]
+pass_criteria: all_corners
+difficulty: hard

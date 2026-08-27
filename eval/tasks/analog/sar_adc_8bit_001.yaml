@@ -1,0 +1,24 @@
+id: sar_adc_8bit_001
+category: analog
+pdk: sky130
+supply: 1.8
+topology_hint: sar_adc
+load: 1pF
+description: 8-bit SAR ADC
+specs:
+  enob:
+    min: 7.5
+    weight: 1.0
+    unit: bits
+  sample_rate:
+    min: 10
+    weight: 1.0
+    unit: MHz
+  idd:
+    max: 500
+    weight: 1.0
+    unit: uA
+corners: [tt, ss, ff, sf, fs]
+temp_range: [-40, 125]
+pass_criteria: all_corners
+difficulty: hard

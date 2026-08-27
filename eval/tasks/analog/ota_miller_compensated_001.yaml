@@ -1,0 +1,28 @@
+id: ota_miller_compensated_001
+category: analog
+pdk: sky130
+supply: 1.8
+topology_hint: miller_compensated_ota
+load: 3pF
+description: Miller-compensated OTA
+specs:
+  gain:
+    min: 65
+    weight: 1.0
+    unit: dB
+  ugb:
+    min: 80
+    weight: 1.0
+    unit: MHz
+  pm:
+    min: 65
+    weight: 1.0
+    unit: deg
+  idd:
+    max: 250
+    weight: 1.0
+    unit: uA
+corners: [tt, ss, ff, sf, fs]
+temp_range: [-40, 125]
+pass_criteria: all_corners
+difficulty: medium

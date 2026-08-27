@@ -1,0 +1,19 @@
+id: priority_encoder_001
+category: digital
+pdk: sky130
+supply: 1.8
+topology_hint: priority_encoder
+description: 8-input priority encoder
+specs:
+  correct_priority:
+    target: 1
+    weight: 1.0
+    unit: bool
+  valid_output:
+    target: 1
+    weight: 1.0
+    unit: bool
+corners: [tt, ss, ff, sf, fs]
+temp_range: [-40, 125]
+pass_criteria: all_corners
+difficulty: easy

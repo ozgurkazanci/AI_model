@@ -1,0 +1,24 @@
+id: diff_to_se_001
+category: analog
+pdk: sky130
+supply: 1.8
+topology_hint: differential_to_single_ended
+load: 1pF
+description: Differential to single-ended converter
+specs:
+  gain:
+    min: 20
+    weight: 1.0
+    unit: dB
+  bw:
+    min: 500
+    weight: 1.0
+    unit: MHz
+  idd:
+    max: 200
+    weight: 1.0
+    unit: uA
+corners: [tt, ss, ff, sf, fs]
+temp_range: [-40, 125]
+pass_criteria: all_corners
+difficulty: easy

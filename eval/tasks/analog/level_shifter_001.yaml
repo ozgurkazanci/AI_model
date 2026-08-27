@@ -1,0 +1,20 @@
+id: level_shifter_001
+category: analog
+pdk: sky130
+supply: 1.8
+topology_hint: level_shifter
+load: 10fF
+description: 1.8V to 3.3V level shifter
+specs:
+  delay:
+    max: 500
+    weight: 1.0
+    unit: ps
+  idd:
+    max: 50
+    weight: 1.0
+    unit: uA
+corners: [tt, ss, ff, sf, fs]
+temp_range: [-40, 125]
+pass_criteria: all_corners
+difficulty: easy

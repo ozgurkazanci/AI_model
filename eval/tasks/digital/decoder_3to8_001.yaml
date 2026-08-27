@@ -1,0 +1,19 @@
+id: decoder_3to8_001
+category: digital
+pdk: sky130
+supply: 1.8
+topology_hint: decoder_3to8
+description: 3-to-8 decoder with enable
+specs:
+  correct:
+    target: 1
+    weight: 1.0
+    unit: bool
+  glitch_free:
+    target: 1
+    weight: 1.0
+    unit: bool
+corners: [tt, ss, ff, sf, fs]
+temp_range: [-40, 125]
+pass_criteria: all_corners
+difficulty: easy

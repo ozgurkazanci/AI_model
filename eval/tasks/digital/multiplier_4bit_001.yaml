@@ -1,0 +1,19 @@
+id: multiplier_4bit_001
+category: digital
+pdk: sky130
+supply: 1.8
+topology_hint: combinational_multiplier
+description: 4-bit combinational multiplier
+specs:
+  correct:
+    target: 1
+    weight: 1.0
+    unit: bool
+  delay:
+    max: 3
+    weight: 1.0
+    unit: ns
+corners: [tt, ss, ff, sf, fs]
+temp_range: [-40, 125]
+pass_criteria: all_corners
+difficulty: medium
