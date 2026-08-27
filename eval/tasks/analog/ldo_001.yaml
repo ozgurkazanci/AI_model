@@ -1,0 +1,29 @@
+id: ldo_001
+category: analog
+pdk: sky130
+supply: 1.8
+topology_hint: Low-dropout regulator
+load: 1uF
+description: Design a low-dropout regulator with stable Vout, low dropout, and good PSRR.
+specs:
+  vout:
+    target: 1.2
+    min: 1.176
+    max: 1.224
+    unit: V
+  dropout:
+    max: 200
+    unit: mV
+  iq:
+    max: 50
+    unit: uA
+  psrr_1khz:
+    min: 60
+    unit: dB
+  load_reg:
+    max: 1
+    unit: '%'
+corners: [tt, ss, ff, sf, fs]
+temp_range: [-40, 125]
+pass_criteria: all_corners
+difficulty: hard

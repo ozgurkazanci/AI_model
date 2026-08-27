@@ -1,0 +1,15 @@
+id: fsm_001
+category: digital
+pdk: sky130
+supply: 1.8
+topology_hint: Traffic light FSM controller
+load: none
+description: RTL design of a simple traffic light FSM.
+specs:
+  freq:
+    min: 100
+    unit: MHz
+corners: [tt, ss, ff, sf, fs]
+temp_range: [-40, 125]
+pass_criteria: all_corners
+difficulty: easy

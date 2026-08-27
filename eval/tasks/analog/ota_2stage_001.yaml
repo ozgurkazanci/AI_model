@@ -1,0 +1,24 @@
+id: ota_2stage_001
+category: analog
+pdk: sky130
+supply: 1.8
+topology_hint: Two-stage operational transconductance amplifier
+load: 2pF
+description: Design a two-stage OTA meeting the gain, UGB, PM, and power specs.
+specs:
+  dc_gain:
+    min: 60
+    unit: dB
+  ugb:
+    min: 50
+    unit: MHz
+  pm:
+    min: 60
+    unit: deg
+  idd:
+    max: 200
+    unit: uA
+corners: [tt, ss, ff, sf, fs]
+temp_range: [-40, 125]
+pass_criteria: all_corners
+difficulty: medium

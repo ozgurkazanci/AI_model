@@ -1,0 +1,19 @@
+id: counter_8bit_001
+category: digital
+pdk: sky130
+supply: 1.8
+topology_hint: 8-bit synchronous counter
+load: none
+description: RTL design of an 8-bit synchronous counter with enable and reset.
+specs:
+  freq:
+    min: 500
+    unit: MHz
+  area:
+    target: 0
+    weight: 0.1
+    unit: um2
+corners: [tt, ss, ff, sf, fs]
+temp_range: [-40, 125]
+pass_criteria: all_corners
+difficulty: easy

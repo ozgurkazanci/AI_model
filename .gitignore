@@ -1,0 +1,53 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Training outputs (large)
+outputs/
+checkpoints/
+wandb/
+
+# Simulation workdirs
+sim_workdir/
+eval_workdir/
+*.raw
+*.log
+
+# Data (large, managed separately)
+data/cpt/
+data/sft/
+data/raw/
+
+# Model weights (large)
+models/
+tokenizer_extended/
+
+# Eval results
+eval_results/
+
+# Secrets
+.env
+*.key

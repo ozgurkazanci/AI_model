@@ -1,0 +1,118 @@
+# Supervised Fine-Tuning (SFT) Configuration - Agent Trajectories
+# Framework: Axolotl
+# Purpose: Teach the model agent behavior - tool calling, diagnosis, repair
+# Design Doc Reference: Section 4, Stage 2
+# THIS IS THE MOST DISTINCTIVE PART OF THE PROJECT
+
+# === BASE MODEL ===
+# Start from CPT checkpoint (or base model if CPT was skipped)
+base_model: ./outputs/cpt/checkpoint-final  # or Qwen/Qwen3.6-35B-A3B
+model_type: AutoModelForCausalLM
+trust_remote_code: true
+
+# === ADAPTER (LoRA) ===
+adapter: lora
+lora_r: 32
+lora_alpha: 64
+lora_dropout: 0.05
+lora_target_modules:
+  - q_proj
+  - k_proj
+  - v_proj
+  - o_proj
+  - gate_proj
+  - up_proj
+  - down_proj
+
+# === DATASET ===
+# Agent trajectories: spec → think → topology → netlist → tool_call → result → diagnose → fix → ...
+datasets:
+  # Distillation trajectories (from strong model + simulator)
+  - path: ./data/sft/distillation_trajectories.jsonl
+    type: sharegpt  # Multi-turn conversation format
+    conversation: chatml_tool  # Includes tool calls
+    split: train
+    weight: 0.4
+  
+  # Synthetic perturbation trajectories (break & repair)
+  - path: ./data/sft/perturbation_trajectories.jsonl
+    type: sharegpt
+    conversation: chatml_tool
+    split: train
+    weight: 0.4
+  
+  # Human design session recordings
+  - path: ./data/sft/human_sessions.jsonl
+    type: sharegpt
+    conversation: chatml_tool
+    split: train
+    weight: 0.2
+
+# === CHAT TEMPLATE ===
+# Must match the tool calling format EXACTLY
+# Format consistency is the #1 pitfall (Design Doc Section 11)
+chat_template: chatml
+# Tool call format: 
+#   <tool_call>{"name": "sim.ac", "arguments": {...}}</tool_call>
+# Tool response:
+#   <tool_response>{"result": {...}}</tool_response>
+
+# === TRAINING HYPERPARAMETERS ===
+num_epochs: 3
+micro_batch_size: 1
+gradient_accumulation_steps: 8
+learning_rate: 1.0e-4  # Higher than CPT, this is supervised
+lr_scheduler_type: cosine
+warmup_ratio: 0.05
+weight_decay: 0.01
+max_grad_norm: 1.0
+
+# === SEQUENCE LENGTH ===
+# Trajectories can be long (10-20 steps × multi-turn)
+sequence_len: 8192
+sample_packing: true
+pad_to_sequence_len: true
+
+# === PRECISION ===
+bf16: auto
+tf32: true
+
+# === HARDWARE ===
+gradient_checkpointing: true
+flash_attention: true
+
+# === LOGGING ===
+logging_steps: 5
+eval_steps: 50
+save_steps: 200
+save_total_limit: 5
+output_dir: ./outputs/sft
+wandb_project: asic-ai-sft
+
+# === EVALUATION ===
+val_set_size: 0.05
+eval_strategy: steps
+
+# === DATA VALIDATION ===
+# CRITICAL: All training data MUST pass schema validation before use
+# Run: python -m asic_ai.data.validator --dataset ./data/sft/ --strict
+# Validation checks:
+#   - Tool call format is IDENTICAL in every example
+#   - Tool names match the frozen contract
+#   - Argument types match expected schema
+#   - Role sequence is valid
+#   - No stray commas or extra fields in tool calls
+
+# === REJECTION SAMPLING ===
+# Only successful trajectories enter training
+# Failed attempts CAN be inside the trajectory (model learns recovery)
+# But the trajectory endpoint must be spec-met
+
+# === NOTES ===
+# 1. Target: 20,000-50,000 trajectories, each 10-20 steps
+# 2. Model learns THREE things simultaneously:
+#    a) Calling tools in correct format
+#    b) Interpreting simulation output
+#    c) What to do after failure ← MOST VALUABLE
+# 3. Synthetic perturbation is the most efficient data source
+# 4. Format consistency is NON-NEGOTIABLE

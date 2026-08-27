@@ -1,0 +1,158 @@
+# Reinforcement Learning Configuration - GRPO with Simulator Reward
+# Framework: TRL (Transformer Reinforcement Learning)
+# Method: Group Relative Policy Optimization (GRPO)
+# Purpose: Teach the model to DESIGN, not just imitate
+# Design Doc Reference: Section 4, Stage 3
+
+# === BASE MODEL ===
+# Start from SFT checkpoint
+base_model: ./outputs/sft/checkpoint-final
+model_type: AutoModelForCausalLM
+trust_remote_code: true
+
+# === ADAPTER ===
+adapter: lora
+lora_r: 32
+lora_alpha: 64
+lora_dropout: 0.0  # No dropout for RL
+lora_target_modules:
+  - q_proj
+  - k_proj
+  - v_proj
+  - o_proj
+  - gate_proj
+  - up_proj
+  - down_proj
+
+# === GRPO CONFIGURATION ===
+grpo:
+  # Number of candidate solutions per problem
+  num_generations: 8
+  
+  # Temperature for generation (higher = more exploration)
+  temperature: 0.8
+  
+  # KL penalty coefficient (prevents divergence from SFT policy)
+  kl_coeff: 0.05
+  
+  # Advantage normalization
+  normalize_advantages: true
+  
+  # Clipping
+  clip_range: 0.2
+  
+  # No separate value network needed (GRPO advantage)
+  # This makes it memory-friendly
+  
+# === REWARD CONFIGURATION ===
+reward:
+  # Source: SIMULATOR, not human
+  source: simulator
+  
+  # Reward function settings (from asic_ai.reward.reward)
+  mode: worst_corner  # nominal_only | worst_corner | all_corners_weighted | monte_carlo
+  
+  # Partial credit: logarithmic distance
+  # score = clip(log2(actual / target), -1, 1)
+  partial_credit: true
+  log_base: 2.0
+  
+  # Corner inclusion in reward
+  include_corners: true
+  corners: [tt, ss, ff, sf, fs]
+  temp_range: [-40, 125]
+  
+  # Feasibility constraints (reward hacking prevention)
+  feasibility_constraints:
+    - name: max_area
+      parameter: total_area
+      max: 10000.0e-12  # 10,000 µm²
+      unit: m²
+    - name: max_current
+      parameter: total_current
+      max: 5.0e-3  # 5 mA
+      unit: A
+    - name: max_device_width
+      parameter: max_W
+      max: 200.0e-6  # 200 µm
+      unit: m
+    - name: min_device_length
+      parameter: min_L
+      min: 150.0e-9  # 150 nm (sky130 min)
+      unit: m
+  
+  # Non-convergence penalty
+  non_convergence_reward: -0.5  # NOT zero - avoids conservatism
+  
+  # Step penalty (encourage efficiency)
+  step_penalty: 0.02  # per step
+
+# === TRAINING TASKS ===
+# RL training tasks (subset of eval set + procedural generation)
+task_source: ./eval/tasks/
+task_sampling:
+  analog_weight: 0.7
+  digital_weight: 0.3
+  # Curriculum: start easy, increase difficulty
+  curriculum:
+    warmup_steps: 100
+    initial_difficulty: easy
+    final_difficulty: hard
+
+# === SIMULATOR CONFIGURATION ===
+simulator:
+  backend: ngspice  # Switch to nabla when ready
+  timeout: 30  # seconds per simulation
+  max_parallel: 16  # parallel simulations (CPU-bound)
+  work_dir: ./sim_workdir
+  seed: 42  # reproducibility
+
+# === TRAINING HYPERPARAMETERS ===
+num_episodes: 10000
+micro_batch_size: 1
+gradient_accumulation_steps: 4
+learning_rate: 5.0e-6  # Very low for RL
+lr_scheduler_type: constant_with_warmup
+warmup_steps: 50
+max_grad_norm: 0.5  # Tight clipping for stability
+
+# === SEQUENCE LENGTH ===
+max_new_tokens: 4096
+max_prompt_length: 4096
+
+# === PRECISION ===
+bf16: true
+tf32: true
+
+# === HARDWARE ===
+gradient_checkpointing: true
+flash_attention: true
+# RL needs more GPU memory (reference + policy model)
+# Minimum: 8x H100 recommended
+
+# === LOGGING ===
+logging_steps: 1
+save_steps: 100
+save_total_limit: 10
+output_dir: ./outputs/rl
+wandb_project: asic-ai-rl
+
+# === CRITICAL BOTTLENECK ===
+# Simulation speed determines RL training feasibility
+# With num_generations=8 and ~10k episodes:
+#   8 * 10000 * 15 steps/episode * 3 sec/sim = ~10M sim-seconds
+#   = ~115 days sequential
+#   = ~7 days with 16 parallel sims
+#   nabla at 300ms/sim: ~0.7 days with 16 parallel sims
+#
+# nabla speed is the GATING FACTOR for RL training
+
+# === REWARD HACKING PREVENTION ===
+# Monitor for:
+# 1. Unrealistically large capacitors to fix phase margin
+# 2. Excessive device count to brute-force specs
+# 3. Designs that pass nominal but fail corners
+# 4. Identical designs submitted for different tasks
+# 
+# Mitigation: feasibility constraints in reward function
+# Additional: periodic human audit of top-scoring designs

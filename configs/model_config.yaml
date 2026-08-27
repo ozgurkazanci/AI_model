@@ -1,0 +1,93 @@
+# Model Configuration
+# This file defines the base model and is the ONLY place the model ID appears.
+# Design Doc Rule: "base model bir config değişkeni olsun, koda gömülü olmasın"
+
+# === ACTIVE MODEL ===
+# Change this to switch base models. Everything else adapts automatically.
+active_model: qwen3.6-35b-a3b
+
+# === MODEL REGISTRY ===
+models:
+  # --- PROTOTYPING (dense, cheap to fine-tune) ---
+  qwen3.5-9b:
+    hf_id: Qwen/Qwen3.5-9B
+    architecture: dense
+    parameters: 9B
+    active_parameters: 9B
+    context_length: 32768
+    license: Apache-2.0
+    use_case: prototype
+    notes: "Dense model, easiest to fine-tune. Use for debugging data pipeline and eval."
+    
+  qwen3.5-27b:
+    hf_id: Qwen/Qwen3.5-27B
+    architecture: dense
+    parameters: 27B
+    active_parameters: 27B
+    context_length: 32768
+    license: Apache-2.0
+    use_case: prototype
+    notes: "Larger dense model. LoRA fine-tune on single GPU."
+
+  # --- PRODUCTION ---
+  qwen3.6-35b-a3b:
+    hf_id: Qwen/Qwen3.6-35B-A3B
+    architecture: moe
+    parameters: 35B
+    active_parameters: 3B
+    context_length: 32768
+    license: Apache-2.0
+    use_case: production
+    notes: >
+      Main production model. MoE with low active params = cheap inference in RL loop.
+      Agentic-coding tuned. Requires careful LoRA with MoE (expert balance monitoring).
+    moe_config:
+      num_experts: 64
+      experts_per_token: 4
+      
+  # --- ALTERNATIVES ---
+  qwen3.8-27b:
+    hf_id: Qwen/Qwen3.8-27B
+    architecture: dense
+    parameters: 27B
+    active_parameters: 27B
+    context_length: 262144
+    license: Apache-2.0
+    use_case: alternative
+    notes: "262K context. Consider if retrieval proves insufficient."
+
+  # --- DO NOT USE ---
+  # qwen3.8-flash-next: No FT tool support, 172 GiB, Qwen4 preview
+  # qwen3.8-2.4t-a95b: Proprietary license, budget/hardware out of scope
+  # qwen3/qwen3-coder: 2 generations behind
+  # qwen4: Not released yet. When released, add here and re-evaluate.
+
+# === INFERENCE SETTINGS ===
+inference:
+  # For agent loop
+  temperature: 0.7
+  top_p: 0.9
+  top_k: 50
+  max_new_tokens: 4096
+  repetition_penalty: 1.05
+  
+  # For RL generation (higher temperature for exploration)
+  rl_temperature: 0.8
+  rl_top_p: 0.95
+
+# === ADAPTER SETTINGS ===
+adapter:
+  type: lora
+  rank: 32
+  alpha: 64
+  dropout: 0.05
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj
+  # For MoE models, LoRA is applied to all experts
+  # Monitor expert load balancing during training

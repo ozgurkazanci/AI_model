@@ -1,0 +1,27 @@
+id: comparator_001
+category: analog
+pdk: sky130
+supply: 1.8
+topology_hint: Clocked StrongARM comparator
+load: 50fF
+description: Design a fast clocked comparator.
+specs:
+  resolution:
+    max: 1
+    unit: mV
+  delay:
+    max: 500
+    unit: ps
+  idd_1ghz:
+    max: 100
+    unit: uA
+  vin_range_min:
+    max: 0.3
+    unit: V
+  vin_range_max:
+    min: 1.5
+    unit: V
+corners: [tt, ss, ff, sf, fs]
+temp_range: [-40, 125]
+pass_criteria: typical_only
+difficulty: easy

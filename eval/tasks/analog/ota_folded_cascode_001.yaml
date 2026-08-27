@@ -1,0 +1,27 @@
+id: ota_folded_cascode_001
+category: analog
+pdk: sky130
+supply: 1.8
+topology_hint: Folded cascode OTA
+load: 1pF
+description: Design a folded cascode OTA with high gain, UGB, PM, CMRR, and low power.
+specs:
+  dc_gain:
+    min: 70
+    unit: dB
+  ugb:
+    min: 100
+    unit: MHz
+  pm:
+    min: 55
+    unit: deg
+  idd:
+    max: 500
+    unit: uA
+  cmrr:
+    min: 80
+    unit: dB
+corners: [tt, ss, ff, sf, fs]
+temp_range: [-40, 125]
+pass_criteria: all_corners
+difficulty: hard

@@ -1,0 +1,24 @@
+id: current_mirror_001
+category: analog
+pdk: sky130
+supply: 1.8
+topology_hint: Wide-swing cascode current mirror
+load: none
+description: Design an accurate current mirror with high output impedance.
+specs:
+  iout_accuracy:
+    max: 1
+    unit: '%'
+  rout:
+    min: 10
+    unit: MOhm
+  compliance:
+    max: 0.6
+    unit: V
+  iref:
+    target: 10
+    unit: uA
+corners: [tt, ss, ff, sf, fs]
+temp_range: [-40, 125]
+pass_criteria: all_corners
+difficulty: easy
