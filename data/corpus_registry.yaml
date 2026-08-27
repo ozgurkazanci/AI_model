@@ -1,0 +1,270 @@
+# CPT Corpus Registry
+# 
+# This file tracks all sources considered for Continued Pretraining (CPT).
+# Every source MUST have license status documented BEFORE inclusion.
+# 
+# Status: APPROVED / PENDING_REVIEW / REJECTED / NOT_AVAILABLE
+# License: The actual license of the source material
+# Est. Tokens: Rough token count estimate
+
+sources:
+
+  # ====================================================================
+  # Category 1: Textbooks (PENDING — most require purchase/scanning)
+  # ====================================================================
+  - id: razavi_analog
+    title: "Design of Analog CMOS Integrated Circuits"
+    author: "Behzad Razavi"
+    edition: "2nd Edition, 2017"
+    license: "Copyright - McGraw-Hill"
+    status: REJECTED
+    reason: "Copyrighted textbook. Cannot use for training without license."
+    est_tokens: ~2M
+    
+  - id: gray_meyer
+    title: "Analysis and Design of Analog Integrated Circuits"
+    author: "Gray, Hurst, Lewis, Meyer"
+    edition: "5th Edition"
+    license: "Copyright - Wiley"
+    status: REJECTED
+    reason: "Copyrighted textbook."
+    est_tokens: ~2M
+
+  - id: allen_holberg
+    title: "CMOS Analog Circuit Design"
+    author: "Allen, Holberg"
+    edition: "3rd Edition"
+    license: "Copyright - Oxford"
+    status: REJECTED
+    reason: "Copyrighted textbook."
+    est_tokens: ~1.5M
+
+  - id: weste_harris
+    title: "CMOS VLSI Design: A Circuits and Systems Perspective"
+    author: "Weste, Harris"
+    edition: "4th Edition"
+    license: "Copyright - Pearson"
+    status: REJECTED
+    reason: "Copyrighted textbook."
+    est_tokens: ~2M
+
+  # ====================================================================
+  # Category 2: Open Access Academic Papers
+  # ====================================================================
+  - id: arxiv_analog_ic
+    title: "arXiv papers on analog IC design"
+    source: "https://arxiv.org/list/eess.SP"
+    license: "CC BY / CC BY-SA (varies per paper)"
+    status: APPROVED
+    reason: "Open access papers with permissive licenses. Must check each paper's license."
+    est_tokens: ~50M
+    collection_method: "arxiv API, filter by keywords: analog IC, CMOS, OTA, LDO, bandgap, ADC, DAC"
+    
+  - id: arxiv_eda_ml
+    title: "arXiv papers on ML for EDA"
+    source: "https://arxiv.org/list/cs.AR"
+    license: "CC BY (mostly)"
+    status: APPROVED
+    reason: "Directly relevant — ML approaches to circuit design."
+    est_tokens: ~20M
+
+  # ====================================================================
+  # Category 3: Open Source Documentation
+  # ====================================================================
+  - id: ngspice_docs
+    title: "ngspice User Manual and Reference"
+    source: "https://ngspice.sourceforge.io/docs.html"
+    license: "BSD 3-Clause (ngspice itself)"
+    status: APPROVED
+    reason: "Open source simulator documentation. Critical for tool usage understanding."
+    est_tokens: ~500K
+    
+  - id: xyce_docs
+    title: "Xyce Parallel Electronic Simulator Documentation"
+    source: "https://xyce.sandia.gov/documentation/"
+    license: "GPL 3.0"
+    status: APPROVED
+    reason: "Open source simulator by Sandia National Labs."
+    est_tokens: ~300K
+
+  - id: openroad_docs
+    title: "OpenROAD Documentation"
+    source: "https://openroad.readthedocs.io/"
+    license: "BSD 3-Clause"
+    status: APPROVED
+    reason: "Open source digital flow documentation."
+    est_tokens: ~200K
+    
+  - id: magic_docs
+    title: "Magic VLSI Layout Tool Documentation"
+    source: "http://opencircuitdesign.com/magic/"
+    license: "MIT"
+    status: APPROVED
+    reason: "Open source layout tool docs."
+    est_tokens: ~100K
+
+  - id: klayout_docs
+    title: "KLayout Documentation"
+    source: "https://www.klayout.de/doc/"
+    license: "GPL 2.0"
+    status: APPROVED
+    reason: "Open source layout viewer/editor docs."
+    est_tokens: ~150K
+
+  - id: opensta_docs
+    title: "OpenSTA Documentation"
+    source: "https://github.com/The-OpenROAD-Project/OpenSTA"
+    license: "GPL 3.0"
+    status: APPROVED
+    reason: "Static timing analysis tool docs."
+    est_tokens: ~50K
+
+  # ====================================================================
+  # Category 4: Open PDK Documentation and Examples
+  # ====================================================================
+  - id: sky130_pdk
+    title: "SkyWater SKY130 PDK Documentation"
+    source: "https://skywater-pdk.readthedocs.io/"
+    license: "Apache 2.0"
+    status: APPROVED
+    reason: "Fully open PDK. Critical for our training."
+    est_tokens: ~500K
+    includes:
+      - Device models and parameters
+      - Design rules
+      - Example circuits
+      - Process specifications
+    
+  - id: gf180_pdk
+    title: "GlobalFoundries GF180MCU PDK"
+    source: "https://github.com/google/gf180mcu-pdk"
+    license: "Apache 2.0"
+    status: APPROVED
+    reason: "Second open PDK for generalization."
+    est_tokens: ~300K
+
+  - id: sky130_analog_examples
+    title: "sky130 Analog Design Examples"
+    source: "https://github.com/google/skywater-pdk-libs-sky130_bag3_pr"
+    license: "Apache 2.0"
+    status: APPROVED
+    reason: "Real analog design examples on sky130."
+    est_tokens: ~200K
+
+  - id: ihp_sg13g2
+    title: "IHP SG13G2 130nm SiGe BiCMOS PDK"
+    source: "https://github.com/IHP-GmbH/IHP-Open-PDK"
+    license: "Apache 2.0"
+    status: APPROVED
+    reason: "Third open PDK, BiCMOS for RF/analog."
+    est_tokens: ~200K
+
+  # ====================================================================
+  # Category 5: Open Source RTL and Digital Designs
+  # ====================================================================
+  - id: opentitan
+    title: "OpenTitan — Open Source Silicon Root of Trust"
+    source: "https://github.com/lowRISC/opentitan"
+    license: "Apache 2.0"
+    status: APPROVED
+    reason: "Production-quality RTL. SoC-level digital design."
+    est_tokens: ~5M
+
+  - id: pulp_platform
+    title: "PULP Platform RISC-V Cores"
+    source: "https://github.com/pulp-platform"
+    license: "Solderpad Hardware License 0.51 (permissive)"
+    status: APPROVED
+    reason: "High-quality RISC-V processor cores and SoC components."
+    est_tokens: ~3M
+
+  - id: verilog_examples
+    title: "FPGA/ASIC Verilog Examples Collection"
+    source: "Various GitHub repos (hdlbits, asic-world, etc.)"
+    license: "Mixed (MIT, BSD, public domain)"
+    status: APPROVED
+    reason: "Training examples for digital design. Must check each repo's license."
+    est_tokens: ~2M
+
+  - id: opencores
+    title: "OpenCores IP Library"
+    source: "https://opencores.org/"
+    license: "LGPL / BSD (varies)"
+    status: PENDING_REVIEW
+    reason: "Large collection of open IP cores. License varies per core."
+    est_tokens: ~10M
+
+  # ====================================================================
+  # Category 6: Analog IP and Circuits
+  # ====================================================================
+  - id: open_analog_designs
+    title: "Open Source Analog IC Designs"
+    source: "Various (ALIGN, OpenFASoC, Berkeley Analog Generator)"
+    license: "Apache 2.0 / BSD"
+    status: APPROVED
+    reason: "Real analog IP with open licenses."
+    est_tokens: ~1M
+    includes:
+      - ALIGN analog layout synthesis examples
+      - OpenFASoC temperature sensors, DC-DC converters
+      - BAG3 design examples
+
+  - id: ieee_open_access
+    title: "IEEE Open Access Papers on Analog Design"
+    source: "https://ieeexplore.ieee.org/ (open access filter)"
+    license: "CC BY (open access only)"
+    status: APPROVED
+    reason: "High-quality conference/journal papers. Only CC BY papers."
+    est_tokens: ~10M
+
+  # ====================================================================
+  # Category 7: Our Own Tools Documentation
+  # ====================================================================
+  - id: nabla_docs
+    title: "nabla Simulator Engine Documentation"
+    source: "Internal — from EDA project"
+    license: "Internal (owned)"
+    status: APPROVED
+    reason: "Our own simulator. Full rights."
+    est_tokens: ~100K
+    note: "Will be available when nabla project is complete."
+
+  - id: eda_tools_docs
+    title: "EDA Tool Suite Documentation"
+    source: "Internal — from EDA project"
+    license: "Internal (owned)"
+    status: APPROVED
+    reason: "Our own tools. Full rights."
+    est_tokens: ~200K
+    note: "Will be available when tool suite is complete."
+
+  # ====================================================================
+  # Category 8: General Code (for catastrophic forgetting prevention)
+  # ====================================================================
+  - id: the_stack_python
+    title: "The Stack v2 — Python subset"
+    source: "https://huggingface.co/datasets/bigcode/the-stack-v2"
+    license: "Various open source"
+    status: APPROVED
+    reason: "10-15% general code mixed into CPT to prevent catastrophic forgetting."
+    est_tokens: ~500M (but we use only ~50M)
+    note: "Sample 10-15% of CPT batch from general Python/Verilog code."
+
+# ====================================================================
+# Summary
+# ====================================================================
+# APPROVED sources: ~16 categories, est. ~100M+ tokens available
+# REJECTED sources: 4 copyrighted textbooks
+# PENDING: OpenCores (license varies per core)
+#
+# Target CPT corpus: 1-5B tokens (from design doc)
+# Available open sources: ~100M tokens
+# Gap: Need to expand arxiv/IEEE crawling and include more open RTL
+#
+# Priority for collection:
+# 1. sky130 PDK + examples (most relevant)
+# 2. ngspice/Xyce docs (tool understanding)
+# 3. Open analog designs (ALIGN, OpenFASoC)
+# 4. arXiv papers (breadth)
+# 5. Open RTL (OpenTitan, PULP)
+# 6. General code (forgetting prevention)

@@ -48,13 +48,18 @@ AI_model/
 │   ├── agent/             # Agent loop, strategy, memory
 │   ├── optimizer/         # Numerical optimizer (Bayesian, CMA-ES)
 │   ├── reward/            # Reward function (partial credit, corners)
-│   ├── data/              # Data pipeline (trajectories, perturbation)
+│   ├── data/              # Data pipeline (trajectories, perturbation, SFT format)
 │   ├── tokenizer/         # Tokenizer extension (SI units, devices)
+│   ├── inference/         # Inference pipeline (runner, parser, engine)
 │   └── training/          # Training launchers (CPT, SFT, RL)
-├── eval/                  # Evaluation framework + task definitions
+├── eval/                  # 54 eval tasks (36 analog + 18 digital)
 ├── configs/               # All configuration (model, training, eval)
-├── tests/                 # Test suite
-└── docs/                  # Design documents
+├── data/
+│   ├── examples/          # Gold-standard trajectories (OTA, LDO, bandgap)
+│   └── corpus_registry.yaml  # CPT source tracking with licenses
+├── scripts/               # CLI tools (baseline, SFT generation, validation)
+├── tests/                 # 113 tests (99 unit + 10 format/inference + 4 ngspice)
+└── docs/                  # Design docs (TR), tool contract, ngspice setup
 ```
 
 ## Training Pipeline
@@ -87,11 +92,17 @@ CPT (domain knowledge) → SFT (agent behavior) → RL/GRPO (design skill)
 # Install
 pip install -e ".[dev]"
 
-# Run evaluation (requires ngspice)
-python -m eval.runner --tasks eval/tasks/ --model <model_id>
+# Run tests
+PYTHONPATH=src pytest tests/ -v
 
-# Validate training data
-python -m asic_ai.data.validator --dataset data/sft/ --strict
+# List all eval tasks
+PYTHONPATH=src python scripts/measure_baseline.py --dry-run
+
+# Generate SFT data (requires API key + ngspice)
+PYTHONPATH=src python scripts/generate_sft_data.py --mode distillation --tasks eval/tasks/analog/
+
+# Validate SFT data
+PYTHONPATH=src python scripts/validate_sft_data.py --input data/sft/output.jsonl
 
 # Launch training (requires GPU)
 python -m asic_ai.training.cpt --config configs/training/cpt_axolotl.yaml
@@ -105,16 +116,16 @@ python -m asic_ai.training.rl_grpo --config configs/training/rl_grpo.yaml --dry-
 
 | Step | Task | Status |
 |------|------|--------|
-| 1 | Tool interface schema (frozen) | ✅ Done |
-| 2 | Eval set (50-200 tasks) | ✅ 9 starter tasks |
-| 3 | Corpus list + license audit | ✅ Framework ready |
-| 4 | Baseline measurement | 🔲 Needs models |
-| 5 | Adapter layer (ngspice/Verilator) | ✅ Done |
-| 6 | Agent loop + RL env | ✅ Done |
-| 7 | Synthetic perturbation pipeline | ✅ Done |
-| 8 | SFT data generation | 🔲 Needs simulator |
-| 9 | Training: CPT → SFT → RL | 🔲 Needs GPU |
-| 10 | Numerical optimizer integration | ✅ Done |
+| 1 | Tool interface schema (frozen) | Done |
+| 2 | Eval set (54 tasks: 36 analog + 18 digital) | Done |
+| 3 | Corpus list + license audit | Done |
+| 4 | Baseline measurement | Ready (needs API key) |
+| 5 | Adapter layer (ngspice/Verilator) | Done |
+| 6 | Agent loop + RL env | Done |
+| 7 | Synthetic perturbation pipeline (real SPICE parsing) | Done |
+| 8 | SFT data generation + inference pipeline | Done |
+| 9 | Training: CPT → SFT → RL | Ready (needs GPU) |
+| 10 | Numerical optimizer integration | Done |
 
 ## For Claude Code Continuation
 
