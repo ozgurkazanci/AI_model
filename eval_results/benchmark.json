@@ -1,0 +1,207 @@
+{
+  "model": "outputs/sft_local/final",
+  "overall_score": 0.09533333333333333,
+  "category_scores": {
+    "analog": 0.012000000000000002,
+    "digital": 0.212,
+    "spectre": 0.112,
+    "signoff": 0.012,
+    "layout": 0.212,
+    "reasoning": 0.112
+  },
+  "duration_s": 0.0,
+  "results": [
+    {
+      "id": "analog_cs_amp",
+      "category": "analog",
+      "difficulty": "easy",
+      "prompt": "Design a common-source amplifier with gain > 20 dB in sky130...",
+      "response_preview": "[VALIDATION MODE - no model loaded]",
+      "scores": {
+        "keyword_score": 0.0,
+        "keyword_hits": "0/5",
+        "tool_score": 0.0,
+        "length_score": 0.06,
+        "word_count": 6,
+        "structure_score": 0.0,
+        "overall": 0.012
+      }
+    },
+    {
+      "id": "analog_ota_design",
+      "category": "analog",
+      "difficulty": "medium",
+      "prompt": "Design a folded cascode OTA with GBW > 50 MHz and PM > 60 de...",
+      "response_preview": "[VALIDATION MODE - no model loaded]",
+      "scores": {
+        "keyword_score": 0.0,
+        "keyword_hits": "0/5",
+        "tool_score": 0.0,
+        "length_score": 0.06,
+        "word_count": 6,
+        "structure_score": 0.0,
+        "overall": 0.012
+      }
+    },
+    {
+      "id": "analog_bandgap",
+      "category": "analog",
+      "difficulty": "hard",
+      "prompt": "Design a bandgap voltage reference with TC < 10 ppm/C across...",
+      "response_preview": "[VALIDATION MODE - no model loaded]",
+      "scores": {
+        "keyword_score": 0.0,
+        "keyword_hits": "0/5",
+        "tool_score": 0.0,
+        "length_score": 0.06,
+        "word_count": 6,
+        "structure_score": 0.0,
+        "overall": 0.012
+      }
+    },
+    {
+      "id": "digital_counter",
+      "category": "digital",
+      "difficulty": "easy",
+      "prompt": "Design a 4-bit synchronous up/down counter in Verilog....",
+      "response_preview": "[VALIDATION MODE - no model loaded]",
+      "scores": {
+        "keyword_score": 0.0,
+        "keyword_hits": "0/5",
+        "tool_score": 1.0,
+        "length_score": 0.06,
+        "word_count": 6,
+        "structure_score": 0.0,
+        "overall": 0.212
+      }
+    },
+    {
+      "id": "digital_fsm",
+      "category": "digital",
+      "difficulty": "medium",
+      "prompt": "Design a UART receiver FSM with configurable baud rate....",
+      "response_preview": "[VALIDATION MODE - no model loaded]",
+      "scores": {
+        "keyword_score": 0.0,
+        "keyword_hits": "0/5",
+        "tool_score": 1.0,
+        "length_score": 0.06,
+        "word_count": 6,
+        "structure_score": 0.0,
+        "overall": 0.212
+      }
+    },
+    {
+      "id": "spectre_stb",
+      "category": "spectre",
+      "difficulty": "medium",
+      "prompt": "How do I use Spectre STB analysis to check loop stability of...",
+      "response_preview": "[VALIDATION MODE - no model loaded]",
+      "scores": {
+        "keyword_score": 0.0,
+        "keyword_hits": "0/5",
+        "tool_score": 0.0,
+        "length_score": 0.06,
+        "word_count": 6,
+        "structure_score": 0.0,
+        "overall": 0.012
+      }
+    },
+    {
+      "id": "spectre_pss",
+      "category": "spectre",
+      "difficulty": "hard",
+      "prompt": "Set up PSS and PNoise analysis for a VCO in Spectre format....",
+      "response_preview": "[VALIDATION MODE - no model loaded]",
+      "scores": {
+        "keyword_score": 0.0,
+        "keyword_hits": "0/5",
+        "tool_score": 1.0,
+        "length_score": 0.06,
+        "word_count": 6,
+        "structure_score": 0.0,
+        "overall": 0.212
+      }
+    },
+    {
+      "id": "pvs_drc",
+      "category": "signoff",
+      "difficulty": "medium",
+      "prompt": "My layout has minimum spacing DRC errors near the guard ring...",
+      "response_preview": "[VALIDATION MODE - no model loaded]",
+      "scores": {
+        "keyword_score": 0.0,
+        "keyword_hits": "0/5",
+        "tool_score": 0.0,
+        "length_score": 0.06,
+        "word_count": 6,
+        "structure_score": 0.0,
+        "overall": 0.012
+      }
+    },
+    {
+      "id": "pvs_lvs",
+      "category": "signoff",
+      "difficulty": "medium",
+      "prompt": "LVS shows unmatched nets in my OTA layout. Debug strategy?...",
+      "response_preview": "[VALIDATION MODE - no model loaded]",
+      "scores": {
+        "keyword_score": 0.0,
+        "keyword_hits": "0/5",
+        "tool_score": 0.0,
+        "length_score": 0.06,
+        "word_count": 6,
+        "structure_score": 0.0,
+        "overall": 0.012
+      }
+    },
+    {
+      "id": "layout_matching",
+      "category": "layout",
+      "difficulty": "medium",
+      "prompt": "How should I layout a differential pair for minimum offset i...",
+      "response_preview": "[VALIDATION MODE - no model loaded]",
+      "scores": {
+        "keyword_score": 0.0,
+        "keyword_hits": "0/5",
+        "tool_score": 1.0,
+        "length_score": 0.06,
+        "word_count": 6,
+        "structure_score": 0.0,
+        "overall": 0.212
+      }
+    },
+    {
+      "id": "reason_tradeoff",
+      "category": "reasoning",
+      "difficulty": "hard",
+      "prompt": "Is it feasible to achieve GBW > 1 GHz with power < 1 mW in s...",
+      "response_preview": "[VALIDATION MODE - no model loaded]",
+      "scores": {
+        "keyword_score": 0.0,
+        "keyword_hits": "0/5",
+        "tool_score": 1.0,
+        "length_score": 0.06,
+        "word_count": 6,
+        "structure_score": 0.0,
+        "overall": 0.212
+      }
+    },
+    {
+      "id": "reason_corner_fail",
+      "category": "reasoning",
+      "difficulty": "hard",
+      "prompt": "My amplifier meets specs at TT corner but fails at SS,125C. ...",
+      "response_preview": "[VALIDATION MODE - no model loaded]",
+      "scores": {
+        "keyword_score": 0.0,
+        "keyword_hits": "0/5",
+        "tool_score": 0.0,
+        "length_score": 0.06,
+        "word_count": 6,
+        "structure_score": 0.0,
+        "overall": 0.012
+      }
+    }
+  ]
+}
