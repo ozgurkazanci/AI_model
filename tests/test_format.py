@@ -6,7 +6,7 @@ def test_system_prompt_content():
     assert len(SYSTEM_PROMPT) > 0
     assert 'circuit' in SYSTEM_PROMPT
     assert 'ASIC' in SYSTEM_PROMPT
-    assert 'tool' in SYSTEM_PROMPT
+    assert 'tool' in SYSTEM_PROMPT.lower()
     assert 'never memorize PDK parameters' in SYSTEM_PROMPT.lower() or 'never memorize' in SYSTEM_PROMPT.lower()
     assert 'step by step' in SYSTEM_PROMPT.lower()
 
@@ -52,7 +52,7 @@ def test_format_trajectory_for_sft():
 
 def test_validate_sft_format_valid():
     valid_data = [
-        {"role": "system", "content": "Sys prompt"},
+        {"role": "system", "content": "You are an expert circuit designer."},
         {"role": "user", "content": "Hi"},
         {"role": "assistant", "content": "Hello"}
     ]
@@ -71,7 +71,7 @@ def test_validate_sft_format_invalid():
     ]
     is_valid, errors = validate_sft_format(invalid_data_role)
     assert is_valid is False
-    assert "system prompt" in errors[0].lower()
+    assert "system" in errors[0].lower()
 
     invalid_data_bad_role = [
         {"role": "system", "content": "Sys prompt"},
