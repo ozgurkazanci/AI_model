@@ -320,6 +320,154 @@ Ibias VDD Vbn {ibias}u
 
 
 # ============================================================
+# Source Follower (Buffer)
+# ============================================================
+
+SOURCE_FOLLOWER = CircuitTemplate(
+    id="source_follower",
+    name="Source Follower (Buffer)",
+    category="analog",
+    description="Unity-gain buffer with low output impedance. Used for driving capacitive loads.",
+    netlist=""".subckt source_follower VDD VSS VIN VOUT
+* Source Follower Buffer - sky130
+.include "sky130.lib" tt
+
+* Input NMOS (common-drain)
+XM1 VDD VIN VOUT VSS sky130_fd_pr__nfet_01v8 W={W_M1}u L={L_M1}u m={M_M1}
+
+* Current source NMOS
+XM2 VOUT VBIAS VSS VSS sky130_fd_pr__nfet_01v8 W={W_M2}u L={L_M2}u m={M_M2}
+
+* Bias generation
+VBIAS VBIAS VSS {VBIAS_V}
+
+* Load cap
+CL VOUT VSS {CL_pF}p
+
+.ends source_follower
+""",
+    parameters={
+        "W_M1": {"default": 20.0, "min": 2.0, "max": 100.0, "unit": "um"},
+        "L_M1": {"default": 0.18, "min": 0.15, "max": 1.0, "unit": "um"},
+        "M_M1": {"default": 2, "min": 1, "max": 8, "unit": ""},
+        "W_M2": {"default": 10.0, "min": 2.0, "max": 50.0, "unit": "um"},
+        "L_M2": {"default": 0.5, "min": 0.18, "max": 2.0, "unit": "um"},
+        "M_M2": {"default": 2, "min": 1, "max": 4, "unit": ""},
+        "VBIAS_V": {"default": 0.6, "min": 0.4, "max": 0.8, "unit": "V"},
+        "CL_pF": {"default": 5.0, "min": 1.0, "max": 20.0, "unit": "pF"},
+    },
+    typical_specs={
+        "gain": {"min": -1.5, "max": 0.0, "unit": "dB", "description": "Near unity gain"},
+        "bandwidth": {"min": 100e6, "unit": "Hz"},
+        "output_impedance": {"max": 500.0, "unit": "ohm"},
+        "idd": {"max": 300e-6, "unit": "A"},
+    },
+    design_notes="Source follower provides voltage buffering. Gain is slightly less than 1 due to body effect.",
+)
+
+
+# ============================================================
+# Differential Pair
+# ============================================================
+
+DIFFERENTIAL_PAIR = CircuitTemplate(
+    id="diff_pair",
+    name="Differential Pair",
+    category="analog",
+    description="Basic differential input stage. Building block for OTAs and comparators.",
+    netlist=""".subckt diff_pair VDD VSS VINP VINM VOUTP VOUTM
+* Differential Pair - sky130
+.include "sky130.lib" tt
+
+* Input differential pair
+XM1 VOUTP VINM VTAIL VSS sky130_fd_pr__nfet_01v8 W={W_IN}u L={L_IN}u m={M_IN}
+XM2 VOUTM VINP VTAIL VSS sky130_fd_pr__nfet_01v8 W={W_IN}u L={L_IN}u m={M_IN}
+
+* PMOS active loads
+XM3 VOUTP VOUTP VDD VDD sky130_fd_pr__pfet_01v8 W={W_LOAD}u L={L_LOAD}u m={M_LOAD}
+XM4 VOUTM VOUTP VDD VDD sky130_fd_pr__pfet_01v8 W={W_LOAD}u L={L_LOAD}u m={M_LOAD}
+
+* Tail current source
+XM5 VTAIL VBIAS VSS VSS sky130_fd_pr__nfet_01v8 W={W_TAIL}u L={L_TAIL}u m={M_TAIL}
+
+* Bias
+VBIAS VBIAS VSS {VBIAS_V}
+
+.ends diff_pair
+""",
+    parameters={
+        "W_IN": {"default": 10.0, "min": 2.0, "max": 50.0, "unit": "um"},
+        "L_IN": {"default": 0.36, "min": 0.18, "max": 1.0, "unit": "um"},
+        "M_IN": {"default": 2, "min": 1, "max": 8, "unit": ""},
+        "W_LOAD": {"default": 5.0, "min": 1.0, "max": 30.0, "unit": "um"},
+        "L_LOAD": {"default": 0.36, "min": 0.18, "max": 1.0, "unit": "um"},
+        "M_LOAD": {"default": 2, "min": 1, "max": 8, "unit": ""},
+        "W_TAIL": {"default": 10.0, "min": 2.0, "max": 40.0, "unit": "um"},
+        "L_TAIL": {"default": 0.5, "min": 0.18, "max": 2.0, "unit": "um"},
+        "M_TAIL": {"default": 2, "min": 1, "max": 4, "unit": ""},
+        "VBIAS_V": {"default": 0.6, "min": 0.4, "max": 0.8, "unit": "V"},
+    },
+    typical_specs={
+        "dc_gain": {"min": 20.0, "unit": "dB"},
+        "input_offset": {"max": 5e-3, "unit": "V"},
+        "cmrr": {"min": 40.0, "unit": "dB"},
+        "idd": {"max": 200e-6, "unit": "A"},
+    },
+    design_notes="Core building block. Matched input pair critical for low offset.",
+)
+
+
+# ============================================================
+# Ring Oscillator
+# ============================================================
+
+RING_OSCILLATOR = CircuitTemplate(
+    id="ring_osc",
+    name="Ring Oscillator",
+    category="digital",
+    description="3-stage CMOS ring oscillator. Process monitor and clock generator.",
+    netlist=""".subckt ring_osc VDD VSS VOUT
+* 3-Stage Ring Oscillator - sky130
+.include "sky130.lib" tt
+
+* Stage 1
+XMP1 N1 N3 VDD VDD sky130_fd_pr__pfet_01v8 W={WP}u L={LP}u m={MP}
+XMN1 N1 N3 VSS VSS sky130_fd_pr__nfet_01v8 W={WN}u L={LN}u m={MN}
+
+* Stage 2
+XMP2 N2 N1 VDD VDD sky130_fd_pr__pfet_01v8 W={WP}u L={LP}u m={MP}
+XMN2 N2 N1 VSS VSS sky130_fd_pr__nfet_01v8 W={WN}u L={LN}u m={MN}
+
+* Stage 3
+XMP3 N3 N2 VDD VDD sky130_fd_pr__pfet_01v8 W={WP}u L={LP}u m={MP}
+XMN3 N3 N2 VSS VSS sky130_fd_pr__nfet_01v8 W={WN}u L={LN}u m={MN}
+
+* Output buffer
+XMP4 VOUT N3 VDD VDD sky130_fd_pr__pfet_01v8 W={WP_BUF}u L={LP}u m=1
+XMN4 VOUT N3 VSS VSS sky130_fd_pr__nfet_01v8 W={WN_BUF}u L={LN}u m=1
+
+.ends ring_osc
+""",
+    parameters={
+        "WP": {"default": 2.0, "min": 0.5, "max": 10.0, "unit": "um"},
+        "LP": {"default": 0.18, "min": 0.15, "max": 0.5, "unit": "um"},
+        "MP": {"default": 1, "min": 1, "max": 4, "unit": ""},
+        "WN": {"default": 1.0, "min": 0.3, "max": 5.0, "unit": "um"},
+        "LN": {"default": 0.18, "min": 0.15, "max": 0.5, "unit": "um"},
+        "MN": {"default": 1, "min": 1, "max": 4, "unit": ""},
+        "WP_BUF": {"default": 4.0, "min": 1.0, "max": 20.0, "unit": "um"},
+        "WN_BUF": {"default": 2.0, "min": 0.5, "max": 10.0, "unit": "um"},
+    },
+    typical_specs={
+        "frequency": {"min": 500e6, "max": 5e9, "unit": "Hz"},
+        "duty_cycle": {"min": 45.0, "max": 55.0, "unit": "%"},
+        "power": {"max": 500e-6, "unit": "W"},
+    },
+    design_notes="Frequency depends on inverter delay. Wp/Wn ratio sets duty cycle. Used as process monitor.",
+)
+
+
+# ============================================================
 # Template Registry
 # ============================================================
 
@@ -331,6 +479,9 @@ TEMPLATES: dict[str, CircuitTemplate] = {
         LDO_REGULATOR,
         CURRENT_MIRROR,
         COMPARATOR,
+        SOURCE_FOLLOWER,
+        DIFFERENTIAL_PAIR,
+        RING_OSCILLATOR,
     ]
 }
 
