@@ -1,0 +1,157 @@
+# Training Hyperparameter Profiles
+#
+# Usage:
+#   PYTHONPATH=src python scripts/finetune_local.py --profile quick-test
+#   PYTHONPATH=src python scripts/finetune_local.py --profile local-full
+#
+# For cloud:
+#   Copy the relevant section to your training script's config.
+
+# ============================================================
+# LOCAL PROFILES (CPU / AMD 780M)
+# ============================================================
+
+quick_test:
+  description: "Quick validation (15 min CPU)"
+  model: "Qwen/Qwen2.5-0.5B-Instruct"
+  lora_r: 16
+  lora_alpha: 32
+  lora_target_modules: ["q_proj", "v_proj"]
+  epochs: 1
+  max_examples: 20
+  batch_size: 1
+  gradient_accumulation_steps: 4
+  learning_rate: 0.0002
+  warmup_steps: 2
+  max_seq_length: 2048
+  save_steps: 5
+  logging_steps: 5
+
+local_full:
+  description: "Full local training (8-10 hours CPU)"
+  model: "Qwen/Qwen2.5-0.5B-Instruct"
+  lora_r: 16
+  lora_alpha: 32
+  lora_target_modules: ["q_proj", "v_proj"]
+  epochs: 3
+  batch_size: 1
+  gradient_accumulation_steps: 4
+  learning_rate: 0.0002
+  warmup_steps: 10
+  max_seq_length: 2048
+  save_steps: 50
+  logging_steps: 10
+  weight_decay: 0.01
+
+local_extended:
+  description: "Extended training with larger LoRA (12+ hours CPU)"
+  model: "Qwen/Qwen2.5-0.5B-Instruct"
+  lora_r: 32
+  lora_alpha: 64
+  lora_target_modules: ["q_proj", "k_proj", "v_proj", "o_proj"]
+  epochs: 5
+  batch_size: 1
+  gradient_accumulation_steps: 4
+  learning_rate: 0.00015
+  warmup_steps: 20
+  max_seq_length: 2048
+  save_steps: 50
+  logging_steps: 10
+  weight_decay: 0.01
+
+# ============================================================
+# CLOUD PROFILES (GPU - A100/H100)
+# ============================================================
+
+cloud_sft_small:
+  description: "SFT on 3B model (~30 min A100)"
+  model: "Qwen/Qwen2.5-3B-Instruct"
+  lora_r: 32
+  lora_alpha: 64
+  lora_target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+  epochs: 3
+  batch_size: 4
+  gradient_accumulation_steps: 2
+  learning_rate: 0.0001
+  warmup_steps: 20
+  max_seq_length: 4096
+  save_steps: 50
+  logging_steps: 5
+  bf16: true
+  weight_decay: 0.01
+  estimated_cost: "$3-5"
+
+cloud_sft_medium:
+  description: "SFT on 7B model (~1 hour A100)"
+  model: "Qwen/Qwen2.5-7B-Instruct"
+  lora_r: 64
+  lora_alpha: 128
+  lora_target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+  epochs: 3
+  batch_size: 2
+  gradient_accumulation_steps: 4
+  learning_rate: 0.00005
+  warmup_steps: 30
+  max_seq_length: 4096
+  save_steps: 50
+  logging_steps: 5
+  bf16: true
+  weight_decay: 0.01
+  estimated_cost: "$8-12"
+
+cloud_sft_large:
+  description: "SFT on 35B-A3B MoE (~2 hours A100)"
+  model: "Qwen/Qwen3.6-35B-A3B"
+  lora_r: 64
+  lora_alpha: 128
+  lora_target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+  epochs: 2
+  batch_size: 1
+  gradient_accumulation_steps: 8
+  learning_rate: 0.00003
+  warmup_steps: 50
+  max_seq_length: 8192
+  save_steps: 25
+  logging_steps: 5
+  bf16: true
+  weight_decay: 0.01
+  estimated_cost: "$12-18"
+
+cloud_grpo:
+  description: "GRPO RL training on 35B-A3B (~6 hours A100)"
+  model: "Qwen/Qwen3.6-35B-A3B"
+  lora_r: 32
+  lora_alpha: 64
+  lora_target_modules: ["q_proj", "k_proj", "v_proj", "o_proj"]
+  epochs: 1
+  group_size: 4
+  batch_size: 1
+  gradient_accumulation_steps: 4
+  learning_rate: 0.000005
+  warmup_steps: 20
+  max_seq_length: 8192
+  kl_coeff: 0.05
+  reward_baseline: "mean"
+  bf16: true
+  estimated_cost: "$35-50"
+
+# ============================================================
+# ABLATION PROFILES (for experiments)
+# ============================================================
+
+ablation_no_curriculum:
+  description: "Without curriculum ordering (random shuffle)"
+  inherits: local_full
+  data_file: "data/sft/train_final.jsonl"
+  shuffle: true  # Override curriculum ordering
+
+ablation_high_lr:
+  description: "Higher learning rate experiment"
+  inherits: local_full
+  learning_rate: 0.0005
+
+ablation_low_rank:
+  description: "Lower LoRA rank (r=8)"
+  inherits: local_full
+  lora_r: 8
+  lora_alpha: 16
