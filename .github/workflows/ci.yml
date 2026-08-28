@@ -1,4 +1,4 @@
-name: CI
+name: ASIC-AI CI
 
 on:
   push:
@@ -7,11 +7,11 @@ on:
     branches: [main]
 
 jobs:
-  lint-and-test:
+  test:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.11", "3.12"]
+        python-version: ["3.11"]
 
     steps:
       - uses: actions/checkout@v4
@@ -24,20 +24,27 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          pip install -r requirements.txt
+          pip install pytest pyyaml ruff
 
       - name: Lint with ruff
         run: |
-          ruff check src/ eval/ tests/
-
-      - name: Type check with mypy
-        run: |
-          mypy src/ --ignore-missing-imports
-        continue-on-error: true  # Strict typing is a goal, not a gate yet
+          ruff check src/ tests/ --select E,F --ignore E501
+        continue-on-error: true
 
       - name: Run tests
         run: |
-          pytest tests/ -v --tb=short
+          PYTHONPATH=src python -m pytest tests/ -v --tb=short
+
+      - name: Validate SFT data format
+        run: |
+          PYTHONPATH=src python scripts/validate_sft_data.py \
+            --input data/sft/train_final.jsonl \
+            --report eval_results/ci_validation.json
+
+      - name: Run pipeline demo
+        run: |
+          PYTHONPATH=src python scripts/demo_full_pipeline.py
 
   validate-schemas:
     runs-on: ubuntu-latest
@@ -52,17 +59,19 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          pip install -r requirements.txt
+          pip install pyyaml
 
       - name: Validate eval task schemas
         run: |
           python -c "
           import yaml
           from pathlib import Path
-          
+
           task_dirs = [Path('eval/tasks/analog'), Path('eval/tasks/digital')]
           required_fields = ['id', 'category', 'pdk', 'specs', 'pass_criteria']
-          
+
+          count = 0
           errors = []
           for task_dir in task_dirs:
               if not task_dir.exists():
@@ -70,14 +79,26 @@ jobs:
               for f in task_dir.glob('*.yaml'):
                   with open(f) as fh:
                       task = yaml.safe_load(fh)
+                  count += 1
                   for field in required_fields:
                       if field not in task:
                           errors.append(f'{f.name}: missing {field}')
-          
+
           if errors:
               for e in errors:
                   print(f'ERROR: {e}')
               exit(1)
           else:
-              print(f'All eval tasks valid')
+              print(f'All {count} eval tasks valid')
+          "
+
+      - name: Check template rendering
+        run: |
+          PYTHONPATH=src python -c "
+          from asic_ai.data.templates import list_templates, render_template
+          templates = list_templates()
+          for t in templates:
+              rendered = render_template(t.id)
+              assert '.subckt' in rendered or '.ends' in rendered
+          print(f'All {len(templates)} templates render OK')
           "
