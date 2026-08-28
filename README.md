@@ -55,12 +55,14 @@ AI_model/
 ├── eval/                  # 54 eval tasks (36 analog + 18 digital)
 ├── configs/               # All configuration (model, training, eval)
 ├── data/
-│   ├── sft/               # 223 SFT training examples (~483K tokens)
+│   ├── sft/               # 393 SFT training examples (~865K tokens)
+│   │   ├── train_final.jsonl  # 354 train (curriculum ordered)
+│   │   └── val_final.jsonl    # 39 validation
 │   ├── examples/          # Gold-standard trajectories (OTA, LDO, bandgap, counter)
 │   └── corpus_registry.yaml  # CPT source tracking with licenses
-├── scripts/               # 12 CLI tools
+├── scripts/               # 23 CLI tools
 ├── tests/                 # 147 passed, 4 skipped (13 test files)
-└── docs/                  # Design docs (TR), tool contract, ngspice setup
+└── docs/                  # Design docs, handoff guide, tool contract
 ```
 
 ## Training Pipeline
@@ -91,7 +93,7 @@ CPT (domain knowledge) → SFT (agent behavior) → RL/GRPO (design skill)
 
 ```bash
 # Install
-pip install -e ".[dev]"
+pip install -r requirements.txt
 
 # Run tests (147 passed, 4 skipped)
 PYTHONPATH=src pytest tests/ -v
@@ -99,24 +101,32 @@ PYTHONPATH=src pytest tests/ -v
 # Run full pipeline demo (no GPU, no simulator needed)
 PYTHONPATH=src python scripts/demo_full_pipeline.py
 
-# Analyze existing training data
+# Analyze training data (393 examples, 14 tools)
 PYTHONPATH=src python scripts/analyze_sft_data.py
 
-# Generate more SFT data from templates
-PYTHONPATH=src python scripts/augment_from_templates.py --variants 20
+# Prepare optimized training dataset
+PYTHONPATH=src python scripts/prepare_training_data.py
 
-# Preview tokenizer extension tokens
-PYTHONPATH=src python scripts/extend_tokenizer.py --test-only
+# Fine-tune locally (CPU, ~15 min quick test)
+PYTHONPATH=src python scripts/finetune_local.py --quick-test
+
+# Run agent with fine-tuned model
+PYTHONPATH=src python scripts/run_agent.py --model outputs/sft_local/final
+
+# Compare base vs fine-tuned model
+PYTHONPATH=src python scripts/compare_models.py
+
+# Run evaluation on all 54 tasks
+PYTHONPATH=src python scripts/run_eval.py --model outputs/sft_local/final --limit 5
+
+# Merge LoRA adapter into base model
+PYTHONPATH=src python scripts/merge_lora.py --model outputs/sft_local/final --test
 
 # Launch inference server (mock mode)
 PYTHONPATH=src python scripts/serve_model.py --model mock --port 8000
 
-# Generate SFT data (requires API key + ngspice)
-PYTHONPATH=src python scripts/generate_sft_data.py --mode distillation --tasks eval/tasks/analog/
-
-# Launch training (requires GPU)
-python -m asic_ai.training.sft --config configs/training/sft_axolotl.yaml
-python -m asic_ai.training.rl_grpo --config configs/training/rl_grpo.yaml --dry-run
+# Cloud training (requires GPU instance)
+PYTHONPATH=src python scripts/cloud_train.py --provider lambda --model Qwen/Qwen2.5-3B-Instruct
 ```
 
 ## Build Order
@@ -128,13 +138,15 @@ python -m asic_ai.training.rl_grpo --config configs/training/rl_grpo.yaml --dry-
 | 1 | Tool interface schema (frozen) | Done |
 | 2 | Eval set (54 tasks: 36 analog + 18 digital) | Done |
 | 3 | Corpus list + license audit | Done |
-| 4 | Baseline measurement | Ready (needs API key) |
-| 5 | Adapter layer (ngspice/Verilator) | Done |
+| 4 | Baseline measurement | Done (mock) |
+| 5 | Adapter layer (ngspice/Verilator) | Done (mock) |
 | 6 | Agent loop + RL env | Done |
-| 7 | Synthetic perturbation pipeline (real SPICE parsing) | Done |
-| 8 | SFT data generation + inference pipeline | Done |
-| 9 | Training: CPT → SFT → RL | Ready (needs GPU) |
-| 10 | Numerical optimizer integration | Done |
+| 7 | Synthetic perturbation pipeline | Done |
+| 8 | SFT data generation (393 examples, 15 tools) | Done |
+| 9 | Local fine-tuning (LoRA, CPU) | Done |
+| 10 | Real LLM validation + agent loop | Done |
+| 11 | Training: Cloud SFT → RL | Ready (needs GPU) |
+| 12 | Numerical optimizer integration | Done |
 
 ## For Claude Code Continuation
 
