@@ -13,7 +13,7 @@ pip install -r requirements.txt
 
 # Run tests (must pass)
 PYTHONPATH=src python -m pytest tests/ -v --tb=short
-# Expected: 147 passed, 4 skipped
+# Expected: 163 passed, 4 skipped
 
 # Run full pipeline demo
 PYTHONPATH=src python scripts/demo_full_pipeline.py
@@ -200,6 +200,17 @@ bafc639 Phase 5:  Mock simulator + E2E
 24fabe1 Phase 12: Real LLM validation
 9bc84c7 Phase 13: First fine-tuned model
 13d3929 Phase 14: Agent runner + comparison
+20c3cb3 Phase 15: Eval harness, LoRA merge, handoff
+1583260 Phase 16: Diverse tool SFT data (71 examples)
+1f80489 Phase 17: GGUF export, handoff update
+30e68a1 Phase 18: Curriculum training data, train/val split
+0104e91 Phase 19: CI/CD, data validation, pyproject v0.2.0
+db2ae7f Phase 20: Contributing guide
+9a99b15 Phase 21: Interactive chat, benchmark, training monitor
+7ae50c9 Fix: Data loading (avoid double-counting)
+a20a71e Phase 22: Makefile, 16 new tests (163 total)
+e2b831a Phase 23: 70 eval tasks (46 analog + 24 digital)
+62ba0cf Phase 24: Project stats dashboard, 12,270 lines
 ```
 
 ## Contact
