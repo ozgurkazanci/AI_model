@@ -35,20 +35,31 @@ SEP = "=" * 70
 
 
 def load_sft_data(data_dir: str = "data/sft", max_examples: int | None = None) -> list[dict]:
-    """Load and merge all SFT JSONL files."""
+    """Load SFT JSONL files. Prefers train_final.jsonl if available."""
     data_path = Path(data_dir)
     all_examples = []
 
-    for f in sorted(data_path.glob("*.jsonl")):
-        if f.name == "demo_output.jsonl":
-            continue  # Skip demo
-        with open(f, encoding="utf-8") as fh:
+    # Prefer the prepared train_final.jsonl (no duplicates, curriculum ordered)
+    final_path = data_path / "train_final.jsonl"
+    if final_path.exists():
+        with open(final_path, encoding="utf-8") as fh:
             for line in fh:
                 ex = json.loads(line.strip())
                 if "messages" in ex:
                     all_examples.append(ex)
-
-    log.info(f"Loaded {len(all_examples)} examples from {data_path}")
+        log.info(f"Loaded {len(all_examples)} examples from {final_path.name}")
+    else:
+        # Fallback: load individual files (skip aggregated ones)
+        skip = {"demo_output.jsonl", "train_final.jsonl", "val_final.jsonl"}
+        for f in sorted(data_path.glob("*.jsonl")):
+            if f.name in skip:
+                continue
+            with open(f, encoding="utf-8") as fh:
+                for line in fh:
+                    ex = json.loads(line.strip())
+                    if "messages" in ex:
+                        all_examples.append(ex)
+        log.info(f"Loaded {len(all_examples)} examples from {data_path}")
 
     if max_examples and len(all_examples) > max_examples:
         all_examples = all_examples[:max_examples]
