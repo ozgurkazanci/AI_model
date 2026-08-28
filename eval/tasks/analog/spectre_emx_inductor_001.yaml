@@ -1,0 +1,38 @@
+id: spectre_emx_inductor_001
+category: analog
+pdk: sky130
+supply: 1.8
+topology_hint: On-chip spiral inductor
+load: none
+simulator: spectre
+description: >
+  Design and characterize an on-chip spiral inductor using EMX
+  electromagnetic extraction + Spectre S-parameter simulation.
+  Target inductance ~2nH at 5 GHz for LNA matching network.
+specs:
+  inductance:
+    target: 2e-9
+    tolerance: 10%
+    unit: H
+    freq: 5e9
+  quality_factor:
+    min: 8
+    unit: ""
+    freq: 5e9
+  self_resonance:
+    min: 15
+    unit: GHz
+  area:
+    max: 50000
+    unit: um2
+required_analyses:
+  - sp
+  - ac
+required_tools:
+  - emx
+  - spectre
+corners: [tt]
+temp_range: [27]
+pass_criteria: nominal
+difficulty: hard
+spectre_specific: true

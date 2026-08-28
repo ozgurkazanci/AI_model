@@ -1,0 +1,34 @@
+id: spectre_pss_vco_001
+category: analog
+pdk: sky130
+supply: 1.8
+topology_hint: Ring oscillator VCO
+load: 100fF
+simulator: spectre
+description: >
+  Design a ring oscillator VCO and characterize phase noise using
+  Spectre PSS/PNoise analysis. Target oscillation at ~1 GHz.
+  PSS finds periodic steady-state, PNoise computes phase noise spectrum.
+specs:
+  frequency:
+    target: 1e9
+    tolerance: 20%
+    unit: Hz
+  phase_noise_1MHz:
+    max: -90
+    unit: dBc/Hz
+  tuning_range:
+    min: 20
+    unit: percent
+  power:
+    max: 5
+    unit: mW
+required_analyses:
+  - pss
+  - pnoise
+  - tran
+corners: [tt, ff, ss]
+temp_range: [-40, 85]
+pass_criteria: all_corners
+difficulty: hard
+spectre_specific: true

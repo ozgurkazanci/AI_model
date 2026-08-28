@@ -1,0 +1,36 @@
+id: spectre_stb_ota_001
+category: analog
+pdk: sky130
+supply: 1.8
+topology_hint: Two-stage OTA with Miller compensation
+load: 5pF
+simulator: spectre
+description: >
+  Design a two-stage OTA and verify loop stability using Spectre STB analysis.
+  Must achieve adequate phase margin with Miller compensation.
+  Use Spectre-native STB analysis (not Bode plot from AC).
+specs:
+  dc_gain:
+    min: 60
+    unit: dB
+  ugb:
+    min: 10
+    target: 50
+    unit: MHz
+  phase_margin:
+    min: 60
+    unit: degrees
+  gain_margin:
+    min: 10
+    unit: dB
+  idd:
+    max: 500
+    unit: uA
+required_analyses:
+  - stb
+  - dc
+corners: [tt, ss, ff]
+temp_range: [-40, 125]
+pass_criteria: all_corners
+difficulty: hard
+spectre_specific: true

@@ -1,0 +1,40 @@
+id: spectre_mc_yield_001
+category: analog
+pdk: sky130
+supply: 1.8
+topology_hint: Folded cascode OTA
+load: 2pF
+simulator: spectre
+description: >
+  Design a folded cascode OTA and verify manufacturing yield
+  using Spectre Monte Carlo analysis with process + mismatch variations.
+  Target 3-sigma yield > 99.7% for all specs.
+specs:
+  dc_gain:
+    min: 70
+    unit: dB
+  ugb:
+    min: 20
+    unit: MHz
+  phase_margin:
+    min: 55
+    unit: degrees
+  offset:
+    max: 5
+    unit: mV
+    stat_type: 3sigma
+  idd:
+    max: 300
+    unit: uA
+required_analyses:
+  - montecarlo
+  - dc
+  - ac
+  - stb
+mc_runs: 500
+yield_target: 99.7
+corners: [tt]
+temp_range: [27]
+pass_criteria: yield
+difficulty: hard
+spectre_specific: true
