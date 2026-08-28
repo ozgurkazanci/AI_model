@@ -13,7 +13,7 @@ pip install -r requirements.txt
 
 # Run tests (must pass)
 PYTHONPATH=src python -m pytest tests/ -v --tb=short
-# Expected: 163 passed, 4 skipped
+# Expected: 175 passed, 0 skipped
 
 # Run full pipeline demo
 PYTHONPATH=src python scripts/demo_full_pipeline.py
@@ -127,11 +127,12 @@ test_trajectory.py      14 tests  — Trajectory models
 test_validator.py       10 tests  — Data validation
 test_format.py           7 tests  — SFT format
 test_inference.py        7 tests  — Inference pipeline
-test_e2e_agent.py        7 tests  — E2E agent
-test_eval_runner.py     10 tests  — Eval runner
-test_rl_env.py          11 tests  — RL environment
-test_templates.py       16 tests  — Circuit templates
-test_ngspice_smoke.py    4 tests  — ngspice (auto-skip)
+test_e2e_agent.py        7 tests  -- E2E agent
+test_eval_runner.py     10 tests  -- Eval runner
+test_rl_env.py          11 tests  -- RL environment
+test_templates.py       16 tests  -- Circuit templates
+test_ngspice_smoke.py    7 tests  -- ngspice DLL smoke tests
+test_ngspice_shared.py   5 tests  -- ngspice adapter integration
 ```
 
 ## Known API Mismatches (DO NOT REVERT)
@@ -147,7 +148,12 @@ These were fixed during development. If you see different behavior, check these:
 - `BaselineReport` does NOT have `total_tokens` field
 - `validate_sft_format()` checks for "circuit" keyword in system prompt
 - `ToolCallParser()` takes NO constructor arguments
-- Unicode emoji cause UnicodeEncodeError on Windows cp1252 — use ASCII
+- Unicode emoji cause UnicodeEncodeError on Windows cp1252 -- use ASCII
+- `transformers 5.16.1`: `warmup_ratio` -> `warmup_steps`, `no_cuda` -> `use_cpu`
+- `torch.load` CVE-2025-32434: requires torch >= 2.6 for safe loading (checkpoint resume broken on 2.5.1)
+- `SignalData` requires `name`, `x_values`, `y_values` (NOT `values`, `unit`)
+- `DCResult` uses `op_points` and `sweeps` (Dict[str, SignalData])
+- `PVTCorner` uses `voltage` (NOT `supply_voltage`)
 
 ## Environment Notes
 
@@ -156,25 +162,27 @@ These were fixed during development. If you see different behavior, check these:
 - **GPU**: AMD Radeon 780M (iGPU, 4GB shared VRAM)
   - DirectML works for small inference
   - Training must be on cloud GPU (A100/H100)
-- **ngspice**: NOT installed
+- **ngspice**: KiCad 10.0 DLL (`C:\Program Files\KiCad\10.0\bin\ngspice.dll`)
+  - Works via ctypes (NgspiceSharedAdapter)
+  - 8 circuits verified: CS amp, inverter, RC filter, NMOS I-V, diff pair, ring osc, bandgap, current mirror
 - **Git**: GitHub CLI authenticated as `ozgurkazanci`
 - **PYTHONPATH**: Always set `PYTHONPATH=src` before running
 
 ## What's Next (Priority Order)
 
 ### High Priority
-1. **More SFT data** — Generate 1000+ examples with stronger model (GPT-4/Claude via API)
-2. **Full 35B SFT** — Run on cloud A100 (~$14, 8 hours)
-3. **RL/GRPO training** — Run on cloud A100 (~$42, 24 hours)
-4. **ngspice integration** — Install and test with real simulator
-5. **Eval with trained model** — Run all 54 tasks, measure improvement
+1. **More SFT data** -- Generate 1000+ examples with stronger model (GPT-4/Claude via API)
+2. **Full 35B SFT** -- Run on cloud A100 (~$14, 8 hours)
+3. **RL/GRPO training** -- Run on cloud A100 (~$42, 24 hours)
+4. **Eval with trained model** -- Run all 70 tasks, measure improvement
+5. **More ngspice SFT** -- Generate training data from real simulations (script ready)
 
 ### Medium Priority
-6. More circuit templates (source follower, PLL, ADC)
+6. More circuit templates (PLL, ADC, DAC, LNA)
 7. RAG system for PDK parameters
-8. Curriculum learning (easy → hard task ordering)
-9. Model merging utilities
-10. HuggingFace model upload
+8. Agent loop with ngspice (real sim in the loop)
+9. HuggingFace model upload
+10. Ablation study results
 
 ### Low Priority
 11. Nabla simulator adapter
@@ -211,6 +219,14 @@ db2ae7f Phase 20: Contributing guide
 a20a71e Phase 22: Makefile, 16 new tests (163 total)
 e2b831a Phase 23: 70 eval tasks (46 analog + 24 digital)
 62ba0cf Phase 24: Project stats dashboard, 12,270 lines
+8cf9cff Phase 25: AI agent rules (.cursorrules, CLAUDE.md)
+f564c06 Phase 26: Training profiles, architecture dashboard
+873d3e7 Phase 27: ngspice WORKING! Ablation study script
+5b5f456 Phase 28: Cloud deploy script
+d58cfb4 Phase 29: ngspice shared library adapter + 5 tests
+0bc0eba Phase 30: AI + ngspice E2E demo (3 circuits)
+728938d Phase 31: Real ngspice SFT data (8 circuits, 1751 data points)
+6fa67d4 Phase 32: 175 tests ALL PASS, 401 training examples
 ```
 
 ## Contact
@@ -218,3 +234,4 @@ e2b831a Phase 23: 70 eval tasks (46 analog + 24 digital)
 - **Owner**: Ozgur Kazanci (`ozgurkazanci@gmail.com`)
 - **GitHub**: `https://github.com/ozgurkazanci/AI_model`
 - **University**: Akdeniz Universitesi
+

@@ -55,13 +55,13 @@ AI_model/
 ├── eval/                  # 70 eval tasks (46 analog + 24 digital)
 ├── configs/               # All configuration (model, training, eval)
 ├── data/
-│   ├── sft/               # 393 SFT training examples (~865K tokens)
-│   │   ├── train_final.jsonl  # 354 train (curriculum ordered)
-│   │   └── val_final.jsonl    # 39 validation
+│   ├── sft/               # 401 SFT training examples (8 from real ngspice)
+│   │   ├── train_final.jsonl  # 361 train (curriculum ordered)
+│   │   └── val_final.jsonl    # 40 validation
 │   ├── examples/          # Gold-standard trajectories (OTA, LDO, bandgap, counter)
 │   └── corpus_registry.yaml  # CPT source tracking with licenses
-├── scripts/               # 26 CLI tools
-├── tests/                 # 163 passed, 4 skipped (15 test files)
+├── scripts/               # 30 CLI tools
+├── tests/                 # 175 passed, 0 skipped (16 test files)
 └── docs/                  # Design docs, handoff guide, tool contract
 ```
 
@@ -95,17 +95,17 @@ CPT (domain knowledge) → SFT (agent behavior) → RL/GRPO (design skill)
 # Install
 pip install -r requirements.txt
 
-# Run tests (147 passed, 4 skipped)
+# Run tests (175 passed, 0 skipped)
 PYTHONPATH=src pytest tests/ -v
 
 # Run full pipeline demo (no GPU, no simulator needed)
 PYTHONPATH=src python scripts/demo_full_pipeline.py
 
-# Analyze training data (393 examples, 14 tools)
-PYTHONPATH=src python scripts/analyze_sft_data.py
+# Test ngspice integration (requires KiCad with ngspice)
+PYTHONPATH=src python scripts/test_ngspice.py
 
-# Prepare optimized training dataset
-PYTHONPATH=src python scripts/prepare_training_data.py
+# E2E demo: AI model + real ngspice simulation
+PYTHONPATH=src python scripts/demo_ai_ngspice.py
 
 # Fine-tune locally (CPU, ~15 min quick test)
 PYTHONPATH=src python scripts/finetune_local.py --quick-test
@@ -113,21 +113,32 @@ PYTHONPATH=src python scripts/finetune_local.py --quick-test
 # Run agent with fine-tuned model
 PYTHONPATH=src python scripts/run_agent.py --model outputs/sft_local/final
 
-# Compare base vs fine-tuned model
-PYTHONPATH=src python scripts/compare_models.py
+# Interactive chat with model
+PYTHONPATH=src python scripts/chat.py --model outputs/sft_local/final
 
-# Run evaluation on all 54 tasks
+# Run evaluation on all 70 tasks
 PYTHONPATH=src python scripts/run_eval.py --model outputs/sft_local/final --limit 5
 
-# Merge LoRA adapter into base model
-PYTHONPATH=src python scripts/merge_lora.py --model outputs/sft_local/final --test
-
-# Launch inference server (mock mode)
-PYTHONPATH=src python scripts/serve_model.py --model mock --port 8000
-
-# Cloud training (requires GPU instance)
-PYTHONPATH=src python scripts/cloud_train.py --provider lambda --model Qwen/Qwen2.5-3B-Instruct
+# Cloud training (single command on GPU instance)
+bash scripts/cloud/deploy_and_train.sh
 ```
+
+## ngspice Integration
+
+Real SPICE simulation via KiCad's bundled ngspice shared library:
+
+```python
+from asic_ai.adapters import get_adapter
+
+adapter = get_adapter("ngspice_shared", binary_path="", work_dir="/tmp/sim")
+result = adapter.dc("circuit.cir", SimParams(analysis_type="dc"))
+print(f"Data points: {sum(len(s.x_values) for s in result.sweeps.values())}")
+```
+
+**Verified circuits**: Common-source amp, CMOS inverter, RC filter, NMOS I-V,
+differential pair, ring oscillator, bandgap reference, current mirror.
+
+**Requirements**: [KiCad](https://www.kicad.org/) (ngspice.dll is bundled).
 
 ## Build Order
 
