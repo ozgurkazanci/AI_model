@@ -141,9 +141,6 @@ def compute_aggregate_metrics(results: list[TaskResult]) -> dict[str, Any]:
         "easy_pass_rate": len(easy_passed) / len(easy) if easy else 0,
         "medium_pass_rate": len(medium_passed) / len(medium) if medium else 0,
         "hard_pass_rate": len(hard_passed) / len(hard) if hard else 0,
-        "total_tokens": sum(
-            r.token_usage.get("total", 0) for r in results
-        ),
     }
 
 
