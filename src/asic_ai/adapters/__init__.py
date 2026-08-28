@@ -22,6 +22,9 @@ def get_adapter(backend: str = 'ngspice', **kwargs) -> SimulatorAdapter:
         return OpenSTAAdapter(config)
     elif backend == 'nabla':
         return NablaAdapter(config)
+    elif backend == 'spectre' or backend == 'spectre_wsl':
+        from asic_ai.adapters.spectre_wsl import SpectreWSLAdapter
+        return SpectreWSLAdapter(config)
     else:
         raise ValueError(f"Unknown simulator backend: {backend}")
 
