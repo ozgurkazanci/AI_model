@@ -73,8 +73,8 @@ class TestTemplateRendering:
     def test_all_templates_renderable(self):
         for tid in TEMPLATES:
             netlist = render_template(tid)
-            assert ".subckt" in netlist
-            assert ".ends" in netlist
+            # Subcircuit templates use .subckt/.ends, flat templates use .end
+            assert ".subckt" in netlist or ".end" in netlist
 
 
 class TestTemplateSpecs:

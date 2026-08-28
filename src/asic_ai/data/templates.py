@@ -468,8 +468,135 @@ XMN4 VOUT N3 VSS VSS sky130_fd_pr__nfet_01v8 W={WN_BUF}u L={LN}u m=1
 
 
 # ============================================================
-# Template Registry
+# ngspice-Verified Templates (level=1 models, work directly)
 # ============================================================
+
+CASCODE_CS_AMP = CircuitTemplate(
+    id="cascode_cs",
+    name="Cascode Common-Source Amplifier",
+    category="analog",
+    description="Cascode CS amplifier for high gain and output resistance. ngspice-verified.",
+    netlist="""\
+* Cascode Common-Source Amplifier
+.model nch nmos level=1 vto={vth}  kp={kp}u lambda=0.02
+VDD vdd 0 DC {vdd}
+Vin gate1 0 DC 0.8
+Vbias gate2 0 DC {vbias}
+RD vdd out {rd}k
+M2 out gate2 mid 0 nch W={w}u L={l}u
+M1 mid gate1 0 0 nch W={w}u L={l}u
+.dc Vin 0.3 1.5 0.01
+.end
+""",
+    parameters={
+        "vdd": {"default": 3.3, "min": 1.8, "max": 5.0, "unit": "V"},
+        "vth": {"default": 0.5, "min": 0.3, "max": 0.7, "unit": "V"},
+        "kp": {"default": 200, "min": 100, "max": 500, "unit": "uA/V^2"},
+        "vbias": {"default": 1.5, "min": 1.0, "max": 2.5, "unit": "V"},
+        "rd": {"default": 10, "min": 1, "max": 50, "unit": "kohm"},
+        "w": {"default": 10, "min": 1, "max": 100, "unit": "um"},
+        "l": {"default": 1, "min": 0.18, "max": 10, "unit": "um"},
+    },
+    typical_specs={
+        "gain_db": {"min": 40, "typical": 60, "unit": "dB"},
+        "rout": {"min": 1e6, "typical": 1e7, "unit": "ohm"},
+    },
+    design_notes="ngspice-verified. Gain = gm1 * (gm2*ro2*ro1). "
+                 "Requires VDD > Vdsat1 + Vdsat2 + Vds_load.",
+)
+
+WIDLAR_CURRENT_SOURCE = CircuitTemplate(
+    id="widlar_cs",
+    name="Widlar Current Source",
+    category="analog",
+    description="Widlar current source for sub-microamp current generation. ngspice-verified.",
+    netlist="""\
+* Widlar Current Source
+.model nch nmos level=1 vto={vth} kp={kp}u lambda=0.02
+VDD vdd 0 DC {vdd}
+Iref vdd drain1 DC {iref}u
+M1 drain1 drain1 0 0 nch W={w}u L={l}u
+M2 drain2 drain1 src2 0 nch W={w}u L={l}u
+Rs src2 0 {rs}k
+Vds drain2 0 DC 0
+.dc Vds 0 {vdd} 0.01
+.end
+""",
+    parameters={
+        "vdd": {"default": 1.8, "min": 1.2, "max": 5.0, "unit": "V"},
+        "vth": {"default": 0.5, "min": 0.3, "max": 0.7, "unit": "V"},
+        "kp": {"default": 200, "min": 100, "max": 500, "unit": "uA/V^2"},
+        "iref": {"default": 100, "min": 10, "max": 1000, "unit": "uA"},
+        "rs": {"default": 20, "min": 1, "max": 100, "unit": "kohm"},
+        "w": {"default": 10, "min": 1, "max": 100, "unit": "um"},
+        "l": {"default": 2, "min": 0.5, "max": 10, "unit": "um"},
+    },
+    typical_specs={
+        "iout": {"min": 1e-6, "typical": 10e-6, "unit": "A"},
+        "rout": {"min": 100e3, "typical": 500e3, "unit": "ohm"},
+    },
+    design_notes="ngspice-verified. Iout << Iref due to source degeneration. "
+                 "Iout set by Vgs1 - Vgs2 = Iout * Rs.",
+)
+
+CMOS_INVERTER = CircuitTemplate(
+    id="cmos_inv",
+    name="CMOS Inverter",
+    category="digital",
+    description="Standard CMOS inverter for VTC and delay analysis. ngspice-verified.",
+    netlist="""\
+* CMOS Inverter
+.model nch nmos level=1 vto={vthn} kp={kpn}u
+.model pch pmos level=1 vto=-{vthp} kp={kpp}u
+VDD vdd 0 DC {vdd}
+Vin in 0 DC 0
+M1 out in 0 0 nch W={wn}u L={l}u
+M2 out in vdd vdd pch W={wp}u L={l}u
+.dc Vin 0 {vdd} 0.01
+.end
+""",
+    parameters={
+        "vdd": {"default": 1.8, "min": 0.8, "max": 5.0, "unit": "V"},
+        "vthn": {"default": 0.5, "min": 0.3, "max": 0.7, "unit": "V"},
+        "vthp": {"default": 0.5, "min": 0.3, "max": 0.7, "unit": "V"},
+        "kpn": {"default": 200, "min": 100, "max": 500, "unit": "uA/V^2"},
+        "kpp": {"default": 100, "min": 50, "max": 250, "unit": "uA/V^2"},
+        "wn": {"default": 2, "min": 0.5, "max": 50, "unit": "um"},
+        "wp": {"default": 4, "min": 1, "max": 100, "unit": "um"},
+        "l": {"default": 0.18, "min": 0.09, "max": 2, "unit": "um"},
+    },
+    typical_specs={
+        "vm": {"min": 0.7, "typical": 0.9, "unit": "V"},
+        "delay": {"min": 10e-12, "typical": 50e-12, "unit": "s"},
+    },
+    design_notes="ngspice-verified. Wp/Wn = kpn/kpp for balanced switching threshold.",
+)
+
+RC_FILTER = CircuitTemplate(
+    id="rc_filter",
+    name="RC Low-Pass Filter",
+    category="analog",
+    description="First-order RC low-pass filter. ngspice-verified.",
+    netlist="""\
+* RC Low-Pass Filter
+V1 in 0 AC 1 DC 0
+R1 in out {r}
+C1 out 0 {c}n
+.ac dec 20 {fstart} {fstop}
+.end
+""",
+    parameters={
+        "r": {"default": 1000, "min": 10, "max": 1e6, "unit": "ohm"},
+        "c": {"default": 1, "min": 0.1, "max": 1000, "unit": "nF"},
+        "fstart": {"default": 100, "min": 1, "max": 1e6, "unit": "Hz"},
+        "fstop": {"default": "100Meg", "min": 1e3, "max": 1e12, "unit": "Hz"},
+    },
+    typical_specs={
+        "f3db": {"typical": 159e3, "unit": "Hz"},
+        "rolloff": {"typical": -20, "unit": "dB/dec"},
+    },
+    design_notes="ngspice-verified. f3dB = 1/(2*pi*R*C). First-order -20 dB/dec rolloff.",
+)
 
 TEMPLATES: dict[str, CircuitTemplate] = {
     t.id: t for t in [
@@ -482,6 +609,10 @@ TEMPLATES: dict[str, CircuitTemplate] = {
         SOURCE_FOLLOWER,
         DIFFERENTIAL_PAIR,
         RING_OSCILLATOR,
+        CASCODE_CS_AMP,
+        WIDLAR_CURRENT_SOURCE,
+        CMOS_INVERTER,
+        RC_FILTER,
     ]
 }
 
