@@ -1,0 +1,154 @@
+# Cadence EDA Tools Configuration
+# Available on WSL: \\wsl.localhost\Alma_EDA\opt\eda\cadence\
+# Linux path: /opt/eda/cadence/
+
+# ============================================================
+# Simulation
+# ============================================================
+spectre:
+  version: "24.1"
+  install_dir: "/opt/eda/cadence/SPECTRE241"
+  binary: "/opt/eda/cadence/SPECTRE241/tools.lnx86/spectre/bin/64bit/spectre"
+  binary_size_mb: 270
+  wsl_path: "\\\\wsl.localhost\\Alma_EDA\\opt\\eda\\cadence\\SPECTRE241"
+  description: "Cadence Spectre circuit simulator (analog/mixed-signal)"
+  capabilities:
+    - dc
+    - ac
+    - tran
+    - noise
+    - stb
+    - pss  # periodic steady-state
+    - pnoise  # periodic noise
+    - pac  # periodic AC
+    - sp  # S-parameter
+    - dcmatch  # mismatch analysis
+    - mc  # Monte Carlo
+    - corners
+  netlist_format: "spectre"  # Spectre native (.scs)
+  also_supports: "spice"  # SPICE format (.sp)
+
+xcelium:
+  version: "23.09"
+  install_dir: "/opt/eda/cadence/XCELUMMAIN2309"
+  wsl_path: "\\\\wsl.localhost\\Alma_EDA\\opt\\eda\\cadence\\XCELUMMAIN2309"
+  description: "Xcelium digital/mixed-signal simulator"
+  capabilities:
+    - verilog
+    - systemverilog
+    - vhdl
+    - uvm
+    - mixed_signal
+
+# ============================================================
+# IC Design (Virtuoso)
+# ============================================================
+virtuoso:
+  version: "23.1"
+  install_dir: "/opt/eda/cadence/IC231"
+  wsl_path: "\\\\wsl.localhost\\Alma_EDA\\opt\\eda\\cadence\\IC231"
+  description: "Virtuoso IC Design (schematic capture + layout)"
+  capabilities:
+    - schematic_capture
+    - layout_editing
+    - constraint_management
+    - pcell_creation
+    - oa_database  # OpenAccess
+
+virtuoso_legacy:
+  version: "6.1.8"
+  install_dir: "/opt/eda/cadence/IC618"
+  wsl_path: "\\\\wsl.localhost\\Alma_EDA\\opt\\eda\\cadence\\IC618"
+  description: "Virtuoso IC Design (legacy version)"
+
+# ============================================================
+# Physical Verification
+# ============================================================
+pvs:
+  version: "22.2"
+  install_dir: "/opt/eda/cadence/PVS222"
+  wsl_path: "\\\\wsl.localhost\\Alma_EDA\\opt\\eda\\cadence\\PVS222"
+  description: "Physical Verification System"
+  capabilities:
+    - drc  # Design Rule Check
+    - lvs  # Layout vs Schematic
+    - erc  # Electrical Rule Check
+    - antenna_check
+    - density_check
+
+# ============================================================
+# Parasitic Extraction
+# ============================================================
+quantus:
+  version: "23.1"
+  install_dir: "/opt/eda/cadence/QUANTUS231"
+  wsl_path: "\\\\wsl.localhost\\Alma_EDA\\opt\\eda\\cadence\\QUANTUS231"
+  description: "Quantus Parasitic Extraction"
+  capabilities:
+    - rc_extraction
+    - capacitance
+    - resistance
+    - inductance
+    - coupled_extraction
+
+emx:
+  version: "20.2"
+  install_dir: "/opt/eda/cadence/EMX20251"
+  wsl_path: "\\\\wsl.localhost\\Alma_EDA\\opt\\eda\\cadence\\EMX20251"
+  description: "EMX Electromagnetic Extraction"
+  capabilities:
+    - em_simulation
+    - s_parameters
+    - inductor_modeling
+
+# ============================================================
+# Digital Design
+# ============================================================
+ddi:
+  version: "25.1"
+  install_dir: "/opt/eda/cadence/DDI251"
+  wsl_path: "\\\\wsl.localhost\\Alma_EDA\\opt\\eda\\cadence\\DDI251"
+  description: "Digital Design Implementation"
+  capabilities:
+    - synthesis
+    - place_and_route
+    - timing_analysis
+    - power_analysis
+
+# ============================================================
+# Verification & Signoff
+# ============================================================
+conformal:
+  version: "23.2"
+  install_dir: "/opt/eda/cadence/CONFRML232"
+  wsl_path: "\\\\wsl.localhost\\Alma_EDA\\opt\\eda\\cadence\\CONFRML232"
+  description: "Conformal Logic Equivalence Checking"
+
+modus:
+  version: "23.1"
+  install_dir: "/opt/eda/cadence/MODUS231"
+  wsl_path: "\\\\wsl.localhost\\Alma_EDA\\opt\\eda\\cadence\\MODUS231"
+  description: "Modus Test Pattern Generation (ATPG)"
+
+ssv:
+  version: "23.1"
+  install_dir: "/opt/eda/cadence/SSV231"
+  wsl_path: "\\\\wsl.localhost\\Alma_EDA\\opt\\eda\\cadence\\SSV231"
+  description: "Silicon SignOff & Verification"
+
+verisium_debug:
+  version: "23.09"
+  install_dir: "/opt/eda/cadence/VERISIUMDEBUG2309"
+  wsl_path: "\\\\wsl.localhost\\Alma_EDA\\opt\\eda\\cadence\\VERISIUMDEBUG2309"
+  description: "Verisium Debug"
+
+# ============================================================
+# Also available (non-Cadence)
+# ============================================================
+ngspice:
+  version: "KiCad 10.0 bundled"
+  install_dir: "C:\\Program Files\\KiCad\\10.0"
+  dll: "C:\\Program Files\\KiCad\\10.0\\bin\\ngspice.dll"
+  description: "ngspice open-source SPICE simulator"
+  adapter: "ngspice_shared"
+  status: "WORKING (16 circuits verified)"

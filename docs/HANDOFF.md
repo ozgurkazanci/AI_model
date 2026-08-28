@@ -164,7 +164,20 @@ These were fixed during development. If you see different behavior, check these:
   - Training must be on cloud GPU (A100/H100)
 - **ngspice**: KiCad 10.0 DLL (`C:\Program Files\KiCad\10.0\bin\ngspice.dll`)
   - Works via ctypes (NgspiceSharedAdapter)
-  - 8 circuits verified: CS amp, inverter, RC filter, NMOS I-V, diff pair, ring osc, bandgap, current mirror
+  - 16 circuits verified
+- **Cadence EDA Suite** (WSL: `\\wsl.localhost\Alma_EDA\opt\eda\cadence\`)
+  - SPECTRE241: Circuit simulator (270MB binary, analog/mixed-signal)
+  - IC231: Virtuoso (schematic + layout)
+  - PVS222: Physical Verification (DRC/LVS)
+  - QUANTUS231: Parasitic extraction
+  - XCELUMMAIN2309: Xcelium digital simulator
+  - CONFRML232: Logic equivalence checking
+  - MODUS231: Test pattern generation (ATPG)
+  - SSV231: Silicon signoff & verification
+  - DDI251: Digital design implementation
+  - EMX20251: Electromagnetic extraction
+  - IC618: Virtuoso legacy
+  - See: `configs/eda_tools.yaml` for full details
 - **Git**: GitHub CLI authenticated as `ozgurkazanci`
 - **PYTHONPATH**: Always set `PYTHONPATH=src` before running
 
