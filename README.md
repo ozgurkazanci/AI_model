@@ -20,10 +20,10 @@ spec → topology → netlist → simulate → read result → diagnose → fix 
 ├─────────────┴───────────────┴───────────────────┤
 │           Tool Interface (Frozen Contract)       │
 │  sim.dc/ac/tran | spec.check | pdk.query | ...  │
-├─────────────┬───────────────┬───────────────────┤
-│  Adapter    │   Adapter     │   Adapter          │
-│  (ngspice)  │   (nabla)     │   (Verilator)     │
-└─────────────┴───────────────┴───────────────────┘
+├──────────┬──────────┬───────────┬───────────────┤
+│ ngspice  │ Spectre  │   nabla   │  Verilator    │
+│ (DLL)    │ (WSL)    │ (future)  │  (digital)    │
+└──────────┴──────────┴───────────┴───────────────┘
 ```
 
 ## Key Design Decisions
@@ -44,7 +44,7 @@ spec → topology → netlist → simulate → read result → diagnose → fix 
 AI_model/
 ├── src/asic_ai/
 │   ├── tool_interface/    # Frozen contract (DO NOT MODIFY)
-│   ├── adapters/          # Simulator backends (ngspice, nabla, mock)
+│   ├── adapters/          # Simulator backends (ngspice, Spectre, mock)
 │   ├── agent/             # Agent loop, strategy, memory
 │   ├── optimizer/         # Numerical optimizer (Bayesian, CMA-ES)
 │   ├── reward/            # Reward function (partial credit, corners)
@@ -52,16 +52,16 @@ AI_model/
 │   ├── tokenizer/         # Tokenizer extension (195 domain tokens)
 │   ├── inference/         # Inference pipeline (runner, parser, engine)
 │   └── training/          # Training launchers (CPT, SFT, RL/GRPO) + RL environment
-├── eval/                  # 70 eval tasks (46 analog + 24 digital)
-├── configs/               # All configuration (model, training, eval)
+├── eval/                  # 74 eval tasks (50 analog + 24 digital)
+├── configs/               # EDA tools, training profiles
 ├── data/
-│   ├── sft/               # 401 SFT training examples (8 from real ngspice)
-│   │   ├── train_final.jsonl  # 361 train (curriculum ordered)
-│   │   └── val_final.jsonl    # 40 validation
+│   ├── sft/               # 420 SFT training examples
+│   │   ├── train_final.jsonl  # 378 train (curriculum ordered)
+│   │   └── val_final.jsonl    # 42 validation
 │   ├── examples/          # Gold-standard trajectories (OTA, LDO, bandgap, counter)
 │   └── corpus_registry.yaml  # CPT source tracking with licenses
-├── scripts/               # 30 CLI tools
-├── tests/                 # 175 passed, 0 skipped (16 test files)
+├── scripts/               # 38 CLI tools
+├── tests/                 # 187 passed, 0 skipped (17 test files)
 └── docs/                  # Design docs, handoff guide, tool contract
 ```
 
