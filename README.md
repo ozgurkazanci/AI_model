@@ -52,7 +52,7 @@ AI_model/
 │   ├── tokenizer/         # Tokenizer extension (195 domain tokens)
 │   ├── inference/         # Inference pipeline (runner, parser, engine)
 │   └── training/          # Training launchers (CPT, SFT, RL/GRPO) + RL environment
-├── eval/                  # 54 eval tasks (36 analog + 18 digital)
+├── eval/                  # 70 eval tasks (46 analog + 24 digital)
 ├── configs/               # All configuration (model, training, eval)
 ├── data/
 │   ├── sft/               # 393 SFT training examples (~865K tokens)
@@ -60,8 +60,8 @@ AI_model/
 │   │   └── val_final.jsonl    # 39 validation
 │   ├── examples/          # Gold-standard trajectories (OTA, LDO, bandgap, counter)
 │   └── corpus_registry.yaml  # CPT source tracking with licenses
-├── scripts/               # 23 CLI tools
-├── tests/                 # 147 passed, 4 skipped (13 test files)
+├── scripts/               # 26 CLI tools
+├── tests/                 # 163 passed, 4 skipped (15 test files)
 └── docs/                  # Design docs, handoff guide, tool contract
 ```
 
