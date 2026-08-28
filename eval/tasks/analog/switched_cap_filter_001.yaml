@@ -1,0 +1,20 @@
+id: switched_cap_filter_001
+category: analog
+pdk: sky130
+supply: 1.8
+topology_hint: switched_capacitor_biquad_filter
+load: 1pF
+description: Switched-capacitor biquad low-pass filter with fc=100kHz and Butterworth Q=0.707
+specs:
+  cutoff_freq:
+    min: 100.0
+    weight: 1.0
+    unit: kHz
+  q_factor:
+    min: 0.707
+    weight: 1.0
+    unit: ""
+corners: [tt, ss, ff, sf, fs]
+temp_range: [-40, 125]
+pass_criteria: all_corners
+difficulty: hard

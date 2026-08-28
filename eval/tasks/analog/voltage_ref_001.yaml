@@ -1,0 +1,21 @@
+id: voltage_ref_001
+category: analog
+pdk: sky130
+supply: 1.8
+topology_hint: 2t_subthreshold_voltage_reference
+load: 1pF
+description: Non-bandgap CMOS voltage reference with low temperature coefficient
+specs:
+  v_out:
+    min: 1.18
+    max: 1.22
+    weight: 1.0
+    unit: V
+  temp_coeff:
+    max: 50.0
+    weight: 1.0
+    unit: ppm/C
+corners: [tt, ss, ff, sf, fs]
+temp_range: [-40, 125]
+pass_criteria: all_corners
+difficulty: medium

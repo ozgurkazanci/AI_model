@@ -1,0 +1,24 @@
+id: crc_32_001
+category: digital
+pdk: sky130
+supply: 1.8
+topology_hint: crc32_parallel_generator
+load: 50fF
+description: 8-bit parallel CRC-32 generator supporting standard polynomial 0x04C11DB7
+specs:
+  data_width:
+    min: 8.0
+    weight: 1.0
+    unit: bits
+  crc_width:
+    min: 32.0
+    weight: 1.0
+    unit: bits
+  clock_frequency:
+    min: 150.0
+    weight: 1.0
+    unit: MHz
+corners: [tt, ss, ff, sf, fs]
+temp_range: [-40, 125]
+pass_criteria: all_corners
+difficulty: medium

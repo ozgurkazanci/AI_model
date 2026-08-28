@@ -1,0 +1,20 @@
+id: watchdog_timer_001
+category: digital
+pdk: sky130
+supply: 1.8
+topology_hint: watchdog_timer_module
+load: 50fF
+description: Configurable watchdog timer module with early warning interrupt and system reset output
+specs:
+  timer_width:
+    min: 16.0
+    weight: 1.0
+    unit: bits
+  clock_frequency:
+    min: 50.0
+    weight: 1.0
+    unit: MHz
+corners: [tt, ss, ff, sf, fs]
+temp_range: [-40, 125]
+pass_criteria: all_corners
+difficulty: medium

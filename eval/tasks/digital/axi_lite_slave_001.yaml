@@ -1,0 +1,24 @@
+id: axi_lite_slave_001
+category: digital
+pdk: sky130
+supply: 1.8
+topology_hint: axi_lite_slave_interface
+load: 50fF
+description: AXI4-Lite slave interface controller supporting 32-bit data and address buses
+specs:
+  data_width:
+    min: 32.0
+    weight: 1.0
+    unit: bits
+  addr_width:
+    min: 32.0
+    weight: 1.0
+    unit: bits
+  clock_frequency:
+    min: 100.0
+    weight: 1.0
+    unit: MHz
+corners: [tt, ss, ff, sf, fs]
+temp_range: [-40, 125]
+pass_criteria: all_corners
+difficulty: medium

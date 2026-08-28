@@ -1,0 +1,24 @@
+id: delta_sigma_2nd_001
+category: analog
+pdk: sky130
+supply: 1.8
+topology_hint: delta_sigma_modulator_2nd_order
+load: 1pF
+description: Second-order delta-sigma modulator with SNR greater than 70dB and 100kHz bandwidth
+specs:
+  snr:
+    min: 70.0
+    weight: 1.0
+    unit: dB
+  bandwidth:
+    min: 100.0
+    weight: 1.0
+    unit: kHz
+  osr:
+    min: 64.0
+    weight: 1.0
+    unit: ""
+corners: [tt, ss, ff, sf, fs]
+temp_range: [-40, 125]
+pass_criteria: all_corners
+difficulty: hard

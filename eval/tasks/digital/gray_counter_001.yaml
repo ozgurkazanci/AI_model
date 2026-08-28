@@ -1,0 +1,20 @@
+id: gray_counter_001
+category: digital
+pdk: sky130
+supply: 1.8
+topology_hint: gray_counter_8bit_async_rst
+load: 50fF
+description: 8-bit Gray code counter featuring asynchronous reset and single-bit transition outputs
+specs:
+  counter_width:
+    min: 8.0
+    weight: 1.0
+    unit: bits
+  clock_frequency:
+    min: 200.0
+    weight: 1.0
+    unit: MHz
+corners: [tt, ss, ff, sf, fs]
+temp_range: [-40, 125]
+pass_criteria: all_corners
+difficulty: easy

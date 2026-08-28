@@ -1,0 +1,20 @@
+id: opamp_rail_to_rail_001
+category: analog
+pdk: sky130
+supply: 1.8
+topology_hint: rail_to_rail_input_output_opamp
+load: 5pF
+description: Rail-to-rail input and output operational amplifier with gain > 80dB and GBW > 10MHz
+specs:
+  gain:
+    min: 80.0
+    weight: 1.0
+    unit: dB
+  gbw:
+    min: 10.0
+    weight: 1.0
+    unit: MHz
+corners: [tt, ss, ff, sf, fs]
+temp_range: [-40, 125]
+pass_criteria: all_corners
+difficulty: medium

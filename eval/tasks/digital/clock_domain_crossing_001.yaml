@@ -1,0 +1,24 @@
+id: clock_domain_crossing_001
+category: digital
+pdk: sky130
+supply: 1.8
+topology_hint: cdc_2ff_handshake_synchronizer
+load: 50fF
+description: Clock domain crossing unit featuring 2FF synchronizer and robust handshake mechanism
+specs:
+  mtbf:
+    min: 1000.0
+    weight: 1.0
+    unit: years
+  src_clock_freq:
+    min: 100.0
+    weight: 1.0
+    unit: MHz
+  dst_clock_freq:
+    min: 50.0
+    weight: 1.0
+    unit: MHz
+corners: [tt, ss, ff, sf, fs]
+temp_range: [-40, 125]
+pass_criteria: all_corners
+difficulty: hard

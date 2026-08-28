@@ -1,0 +1,20 @@
+id: edge_detector_001
+category: digital
+pdk: sky130
+supply: 1.8
+topology_hint: dual_edge_detector_pulse
+load: 50fF
+description: Edge detector circuit generating single-cycle synchronous pulses for rising and falling edges
+specs:
+  pulse_width:
+    min: 1.0
+    weight: 1.0
+    unit: cycles
+  clock_frequency:
+    min: 250.0
+    weight: 1.0
+    unit: MHz
+corners: [tt, ss, ff, sf, fs]
+temp_range: [-40, 125]
+pass_criteria: all_corners
+difficulty: easy

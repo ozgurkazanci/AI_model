@@ -1,0 +1,24 @@
+id: mixer_gilbert_001
+category: analog
+pdk: sky130
+supply: 1.8
+topology_hint: double_balanced_gilbert_mixer
+load: 500ohm
+description: Double-balanced Gilbert cell active mixer operating at 2.4GHz
+specs:
+  conversion_gain:
+    min: 5.0
+    weight: 1.0
+    unit: dB
+  noise_figure:
+    max: 12.0
+    weight: 1.0
+    unit: dB
+  frequency:
+    min: 2.4
+    weight: 1.0
+    unit: GHz
+corners: [tt, ss, ff, sf, fs]
+temp_range: [-40, 125]
+pass_criteria: all_corners
+difficulty: hard

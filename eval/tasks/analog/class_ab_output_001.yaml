@@ -1,0 +1,20 @@
+id: class_ab_output_001
+category: analog
+pdk: sky130
+supply: 1.8
+topology_hint: class_ab_output_stage
+load: 10pF
+description: Class-AB output stage with high slew rate and low quiescent current
+specs:
+  slew_rate:
+    min: 100.0
+    weight: 1.0
+    unit: V/us
+  idd_quiescent:
+    max: 50.0
+    weight: 1.0
+    unit: uA
+corners: [tt, ss, ff, sf, fs]
+temp_range: [-40, 125]
+pass_criteria: all_corners
+difficulty: medium

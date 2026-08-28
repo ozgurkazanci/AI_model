@@ -1,0 +1,20 @@
+id: charge_pump_pll_001
+category: analog
+pdk: sky130
+supply: 1.8
+topology_hint: pll_charge_pump_matched
+load: 1pF
+description: PLL charge pump with matched 10uA pull-up/pull-down currents and low mismatch
+specs:
+  i_pump:
+    min: 10.0
+    weight: 1.0
+    unit: uA
+  mismatch:
+    max: 2.0
+    weight: 1.0
+    unit: "%"
+corners: [tt, ss, ff, sf, fs]
+temp_range: [-40, 125]
+pass_criteria: all_corners
+difficulty: medium
