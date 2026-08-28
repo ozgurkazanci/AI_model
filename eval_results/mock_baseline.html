@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ASIC-AI Eval Report</title>
+<style>
+  body { font-family: 'Segoe UI', system-ui, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; background: #f8f9fa; }
+  h1 { color: #1a1a2e; border-bottom: 3px solid #16213e; padding-bottom: 10px; }
+  h2 { color: #16213e; margin-top: 30px; }
+  .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin: 20px 0; }
+  .card { background: white; border-radius: 8px; padding: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); text-align: center; }
+  .card .value { font-size: 2.5em; font-weight: bold; color: #0f3460; }
+  .card .label { color: #666; margin-top: 5px; font-size: 0.9em; }
+  table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin: 15px 0; }
+  th { background: #16213e; color: white; padding: 12px 15px; text-align: left; font-weight: 500; }
+  td { padding: 10px 15px; border-bottom: 1px solid #eee; }
+  tr:hover td { background: #f0f4ff; }
+  .pass { color: #27ae60; font-weight: bold; }
+  .fail { color: #e74c3c; font-weight: bold; }
+  .bar { display: inline-block; height: 18px; background: #3498db; border-radius: 3px; min-width: 2px; }
+  .bar-bg { display: inline-block; height: 18px; background: #ecf0f1; border-radius: 3px; width: 100px; }
+  .meta { color: #888; font-size: 0.85em; margin: 10px 0; }
+  .difficulty-easy { color: #27ae60; } .difficulty-medium { color: #f39c12; } .difficulty-hard { color: #e74c3c; }
+</style>
+</head>
+<body>
+<h1>ASIC-AI Eval Report</h1>
+<p class="meta">Model: <strong>openai/gpt-4o-mini</strong> | Generated: 2026-08-28T09:32:30 | Tasks: 54</p>
+
+<div class="summary">
+  <div class="card"><div class="value">0%</div><div class="label">Overall Pass Rate</div></div>
+  <div class="card"><div class="value">0.000</div><div class="label">Avg Score</div></div>
+  <div class="card"><div class="value">0/54</div><div class="label">Tasks Passed</div></div>
+  <div class="card"><div class="value">0.0</div><div class="label">Avg Steps</div></div>
+</div>
+
+<h2>By Category</h2>
+<div class="summary">
+  <div class="card"><div class="value">0%</div><div class="label">Analog (36)</div></div>
+  <div class="card"><div class="value">0%</div><div class="label">Digital (18)</div></div>
+</div>
+
+<h2>By Difficulty</h2>
+<div class="summary">
+  <div class="card"><div class="value difficulty-easy">0%</div><div class="label">Easy (14)</div></div>
+  <div class="card"><div class="value difficulty-medium">0%</div><div class="label">Medium (22)</div></div>
+  <div class="card"><div class="value difficulty-hard">0%</div><div class="label">Hard (18)</div></div>
+</div>
+
+<h2>Task Results</h2>
+<table>
+<tr><th>Task ID</th><th>Category</th><th>Difficulty</th><th>Score</th><th>Steps</th><th>Status</th><th>Time</th></tr>
+<tr><td>comparator_001</td><td>analog</td><td><span class="difficulty-easy">easy</span></td><td><div class="bar-bg"><div class="bar" style="width:0px"></div></div> 0.000</td><td>0</td><td><span class="fail">FAIL</span></td><td>0.0s</td></tr>
+<tr><td>current_mirror_001</td><td>analog</td><td><span class="difficulty-easy">easy</span></td><td><div class="bar-bg"><div class="bar" style="width:0px"></div></div> 0.000</td><td>0</td><td><span class="fail">FAIL</span></td><td>0.0s</td></tr>
+<tr><td>diff_to_se_001</td><td>analog</td><td><span class="difficulty-easy">easy</span></td><td><div class="bar-bg"><div class="bar" style="width:0px"></div></div> 0.000</td><td>0</td><td><span class="fail">FAIL</span></td><td>0.0s</td></tr>
+<tr><td>level_shifter_001</td><td>analog</td><td><span class="difficulty-easy">easy</span></td><td><div class="bar-bg"><div class="bar" style="width:0px"></div></div> 0.000</td><td>0</td><td><span class="fail">FAIL</span></td><td>0.0s</td></tr>
+<tr><td>ring_osc_3stage_001</td><td>analog</td><td><span class="difficulty-easy">easy</span></td><td><div class="bar-bg"><div class="bar" style="width:0px"></div></div> 0.000</td><td>0</td><td><span class="fail">FAIL</span></td><td>0.0s</td></tr>
+<tr><td>schmitt_trigger_001</td><td>analog</td><td><span class="difficulty-easy">easy</span></td><td><div class="bar-bg"><div class="bar" style="width:0px"></div></div> 0.000</td><td>0</td><td><span class="fail">FAIL</span></td><td>0.0s</td></tr>
+<tr><td>source_follower_001</td><td>analog</td><td><span class="difficulty-easy">easy</span></td><td><div class="bar-bg"><div class="bar" style="width:0px"></div></div> 0.000</td><td>0</td><td><span class="fail">FAIL</span></td><td>0.0s</td></tr>
+<tr><td>bandgap_curvature_001</td><td>analog</td><td><span class="difficulty-hard">hard</span></td><td><div class="bar-bg"><div class="bar" style="width:0px"></div></div> 0.000</td><td>0</td><td><span class="fail">FAIL</span></td><td>0.0s</td></tr>
+<tr><td>current_steering_dac_001</td><td>analog</td><td><span class="difficulty-hard">hard</span></td><td><div class="bar-bg"><div class="bar" style="width:0px"></div></div> 0.000</td><td>0</td><td><span class="fail">FAIL</span></td><td>0.0s</td></tr>
+<tr><td>flash_adc_3bit_001</td><td>analog</td><td><span class="difficulty-hard">hard</span></td><td><div class="bar-bg"><div class="bar" style="width:0px"></div></div> 0.000</td><td>0</td><td><span class="fail">FAIL</span></td><td>0.0s</td></tr>
+<tr><td>lc_vco_001</td><td>analog</td><td><span class="difficulty-hard">hard</span></td><td><div class="bar-bg"><div class="bar" style="width:0px"></div></div> 0.000</td><td>0</td><td><span class="fail">FAIL</span></td><td>0.0s</td></tr>
+<tr><td>ldo_001</td><td>analog</td><td><span class="difficulty-hard">hard</span></td><td><div class="bar-bg"><div class="bar" style="width:0px"></div></div> 0.000</td><td>0</td><td><span class="fail">FAIL</span></td><td>0.0s</td></tr>
+<tr><td>ldo_cap_less_001</td><td>analog</td><td><span class="difficulty-hard">hard</span></td><td><div class="bar-bg"><div class="bar" style="width:0px"></div></div> 0.000</td><td>0</td><td><span class="fail">FAIL</span></td><td>0.0s</td></tr>
+<tr><td>ota_feedforward_001</td><td>analog</td><td><span class="difficulty-hard">hard</span></td><td><div class="bar-bg"><div class="bar" style="width:0px"></div></div> 0.000</td><td>0</td><td><span class="fail">FAIL</span></td><td>0.0s</td></tr>
+<tr><td>ota_folded_cascode_001</td><td>analog</td><td><span class="difficulty-hard">hard</span></td><td><div class="bar-bg"><div class="bar" style="width:0px"></div></div> 0.000</td><td>0</td><td><span class="fail">FAIL</span></td><td>0.0s</td></tr>
+<tr><td>ota_recycling_001</td><td>analog</td><td><span class="difficulty-hard">hard</span></td><td><div class="bar-bg"><div class="bar" style="width:0px"></div></div> 0.000</td><td>0</td><td><span class="fail">FAIL</span></td><td>0.0s</td></tr>
+<tr><td>ota_telescopic_001</td><td>analog</td><td><span class="difficulty-hard">hard</span></td><td><div class="bar-bg"><div class="bar" style="width:0px"></div></div> 0.000</td><td>0</td><td><span class="fail">FAIL</span></td><td>0.0s</td></tr>
+<tr><td>sar_adc_8bit_001</td><td>analog</td><td><span class="difficulty-hard">hard</span></td><td><div class="bar-bg"><div class="bar" style="width:0px"></div></div> 0.000</td><td>0</td><td><span class="fail">FAIL</span></td><td>0.0s</td></tr>
+<tr><td>sigma_delta_1bit_001</td><td>analog</td><td><span class="difficulty-hard">hard</span></td><td><div class="bar-bg"><div class="bar" style="width:0px"></div></div> 0.000</td><td>0</td><td><span class="fail">FAIL</span></td><td>0.0s</td></tr>
+<tr><td>switched_cap_dc_dc_001</td><td>analog</td><td><span class="difficulty-hard">hard</span></td><td><div class="bar-bg"><div class="bar" style="width:0px"></div></div> 0.000</td><td>0</td><td><span class="fail">FAIL</span></td><td>0.0s</td></tr>
+<tr><td>tia_001</td><td>analog</td><td><span class="difficulty-hard">hard</span></td><td><div class="bar-bg"><div class="bar" style="width:0px"></div></div> 0.000</td><td>0</td><td><span class="fail">FAIL</span></td><td>0.0s</td></tr>
+<tr><td>variable_gain_amp_001</td><td>analog</td><td><span class="difficulty-hard">hard</span></td><td><div class="bar-bg"><div class="bar" style="width:0px"></div></div> 0.000</td><td>0</td><td><span class="fail">FAIL</span></td><td>0.0s</td></tr>
+<tr><td>bandgap_001</td><td>analog</td><td><span class="difficulty-medium">medium</span></td><td><div class="bar-bg"><div class="bar" style="width:0px"></div></div> 0.000</td><td>0</td><td><span class="fail">FAIL</span></td><td>0.0s</td></tr>
+<tr><td>bias_generator_001</td><td>analog</td><td><span class="difficulty-medium">medium</span></td><td><div class="bar-bg"><div class="bar" style="width:0px"></div></div> 0.000</td><td>0</td><td><span class="fail">FAIL</span></td><td>0.0s</td></tr>
+<tr><td>cascode_amp_001</td><td>analog</td><td><span class="difficulty-medium">medium</span></td><td><div class="bar-bg"><div class="bar" style="width:0px"></div></div> 0.000</td><td>0</td><td><span class="fail">FAIL</span></td><td>0.0s</td></tr>
+<tr><td>charge_pump_001</td><td>analog</td><td><span class="difficulty-medium">medium</span></td><td><div class="bar-bg"><div class="bar" style="width:0px"></div></div> 0.000</td><td>0</td><td><span class="fail">FAIL</span></td><td>0.0s</td></tr>
+<tr><td>clock_divider_001</td><td>analog</td><td><span class="difficulty-medium">medium</span></td><td><div class="bar-bg"><div class="bar" style="width:0px"></div></div> 0.000</td><td>0</td><td><span class="fail">FAIL</span></td><td>0.0s</td></tr>
+<tr><td>crystal_osc_001</td><td>analog</td><td><span class="difficulty-medium">medium</span></td><td><div class="bar-bg"><div class="bar" style="width:0px"></div></div> 0.000</td><td>0</td><td><span class="fail">FAIL</span></td><td>0.0s</td></tr>
+<tr><td>dac_r2r_4bit_001</td><td>analog</td><td><span class="difficulty-medium">medium</span></td><td><div class="bar-bg"><div class="bar" style="width:0px"></div></div> 0.000</td><td>0</td><td><span class="fail">FAIL</span></td><td>0.0s</td></tr>
+<tr><td>instrumentation_amp_001</td><td>analog</td><td><span class="difficulty-medium">medium</span></td><td><div class="bar-bg"><div class="bar" style="width:0px"></div></div> 0.000</td><td>0</td><td><span class="fail">FAIL</span></td><td>0.0s</td></tr>
+<tr><td>ota_2stage_001</td><td>analog</td><td><span class="difficulty-medium">medium</span></td><td><div class="bar-bg"><div class="bar" style="width:0px"></div></div> 0.000</td><td>0</td><td><span class="fail">FAIL</span></td><td>0.0s</td></tr>
+<tr><td>ota_miller_compensated_001</td><td>analog</td><td><span class="difficulty-medium">medium</span></td><td><div class="bar-bg"><div class="bar" style="width:0px"></div></div> 0.000</td><td>0</td><td><span class="fail">FAIL</span></td><td>0.0s</td></tr>
+<tr><td>phase_detector_001</td><td>analog</td><td><span class="difficulty-medium">medium</span></td><td><div class="bar-bg"><div class="bar" style="width:0px"></div></div> 0.000</td><td>0</td><td><span class="fail">FAIL</span></td><td>0.0s</td></tr>
+<tr><td>relaxation_osc_001</td><td>analog</td><td><span class="difficulty-medium">medium</span></td><td><div class="bar-bg"><div class="bar" style="width:0px"></div></div> 0.000</td><td>0</td><td><span class="fail">FAIL</span></td><td>0.0s</td></tr>
+<tr><td>sample_hold_001</td><td>analog</td><td><span class="difficulty-medium">medium</span></td><td><div class="bar-bg"><div class="bar" style="width:0px"></div></div> 0.000</td><td>0</td><td><span class="fail">FAIL</span></td><td>0.0s</td></tr>
+<tr><td>shunt_regulator_001</td><td>analog</td><td><span class="difficulty-medium">medium</span></td><td><div class="bar-bg"><div class="bar" style="width:0px"></div></div> 0.000</td><td>0</td><td><span class="fail">FAIL</span></td><td>0.0s</td></tr>
+<tr><td>adder_ripple_8bit_001</td><td>digital</td><td><span class="difficulty-easy">easy</span></td><td><div class="bar-bg"><div class="bar" style="width:0px"></div></div> 0.000</td><td>0</td><td><span class="fail">FAIL</span></td><td>0.0s</td></tr>
+<tr><td>clock_gating_001</td><td>digital</td><td><span class="difficulty-easy">easy</span></td><td><div class="bar-bg"><div class="bar" style="width:0px"></div></div> 0.000</td><td>0</td><td><span class="fail">FAIL</span></td><td>0.0s</td></tr>
+<tr><td>counter_8bit_001</td><td>digital</td><td><span class="difficulty-easy">easy</span></td><td><div class="bar-bg"><div class="bar" style="width:0px"></div></div> 0.000</td><td>0</td><td><span class="fail">FAIL</span></td><td>0.0s</td></tr>
+<tr><td>decoder_3to8_001</td><td>digital</td><td><span class="difficulty-easy">easy</span></td><td><div class="bar-bg"><div class="bar" style="width:0px"></div></div> 0.000</td><td>0</td><td><span class="fail">FAIL</span></td><td>0.0s</td></tr>
+<tr><td>fsm_001</td><td>digital</td><td><span class="difficulty-easy">easy</span></td><td><div class="bar-bg"><div class="bar" style="width:0px"></div></div> 0.000</td><td>0</td><td><span class="fail">FAIL</span></td><td>0.0s</td></tr>
+<tr><td>priority_encoder_001</td><td>digital</td><td><span class="difficulty-easy">easy</span></td><td><div class="bar-bg"><div class="bar" style="width:0px"></div></div> 0.000</td><td>0</td><td><span class="fail">FAIL</span></td><td>0.0s</td></tr>
+<tr><td>pwm_generator_001</td><td>digital</td><td><span class="difficulty-easy">easy</span></td><td><div class="bar-bg"><div class="bar" style="width:0px"></div></div> 0.000</td><td>0</td><td><span class="fail">FAIL</span></td><td>0.0s</td></tr>
+<tr><td>fifo_async_001</td><td>digital</td><td><span class="difficulty-hard">hard</span></td><td><div class="bar-bg"><div class="bar" style="width:0px"></div></div> 0.000</td><td>0</td><td><span class="fail">FAIL</span></td><td>0.0s</td></tr>
+<tr><td>i2c_slave_001</td><td>digital</td><td><span class="difficulty-hard">hard</span></td><td><div class="bar-bg"><div class="bar" style="width:0px"></div></div> 0.000</td><td>0</td><td><span class="fail">FAIL</span></td><td>0.0s</td></tr>
+<tr><td>mem_controller_001</td><td>digital</td><td><span class="difficulty-hard">hard</span></td><td><div class="bar-bg"><div class="bar" style="width:0px"></div></div> 0.000</td><td>0</td><td><span class="fail">FAIL</span></td><td>0.0s</td></tr>
+<tr><td>adder_cla_16bit_001</td><td>digital</td><td><span class="difficulty-medium">medium</span></td><td><div class="bar-bg"><div class="bar" style="width:0px"></div></div> 0.000</td><td>0</td><td><span class="fail">FAIL</span></td><td>0.0s</td></tr>
+<tr><td>alu_8bit_001</td><td>digital</td><td><span class="difficulty-medium">medium</span></td><td><div class="bar-bg"><div class="bar" style="width:0px"></div></div> 0.000</td><td>0</td><td><span class="fail">FAIL</span></td><td>0.0s</td></tr>
+<tr><td>arbiter_round_robin_001</td><td>digital</td><td><span class="difficulty-medium">medium</span></td><td><div class="bar-bg"><div class="bar" style="width:0px"></div></div> 0.000</td><td>0</td><td><span class="fail">FAIL</span></td><td>0.0s</td></tr>
+<tr><td>fifo_sync_001</td><td>digital</td><td><span class="difficulty-medium">medium</span></td><td><div class="bar-bg"><div class="bar" style="width:0px"></div></div> 0.000</td><td>0</td><td><span class="fail">FAIL</span></td><td>0.0s</td></tr>
+<tr><td>multiplier_4bit_001</td><td>digital</td><td><span class="difficulty-medium">medium</span></td><td><div class="bar-bg"><div class="bar" style="width:0px"></div></div> 0.000</td><td>0</td><td><span class="fail">FAIL</span></td><td>0.0s</td></tr>
+<tr><td>shift_register_001</td><td>digital</td><td><span class="difficulty-medium">medium</span></td><td><div class="bar-bg"><div class="bar" style="width:0px"></div></div> 0.000</td><td>0</td><td><span class="fail">FAIL</span></td><td>0.0s</td></tr>
+<tr><td>spi_master_001</td><td>digital</td><td><span class="difficulty-medium">medium</span></td><td><div class="bar-bg"><div class="bar" style="width:0px"></div></div> 0.000</td><td>0</td><td><span class="fail">FAIL</span></td><td>0.0s</td></tr>
+<tr><td>uart_tx_001</td><td>digital</td><td><span class="difficulty-medium">medium</span></td><td><div class="bar-bg"><div class="bar" style="width:0px"></div></div> 0.000</td><td>0</td><td><span class="fail">FAIL</span></td><td>0.0s</td></tr>
+</table>
+
+</body>
+</html>

@@ -36,17 +36,17 @@ eval_workdir/
 *.raw
 *.log
 
-# Data (large, managed separately)
+# Data (large production data, managed separately)
 data/cpt/
-data/sft/
+data/sft/production_*
 data/raw/
 
 # Model weights (large)
 models/
 tokenizer_extended/
 
-# Eval results
-eval_results/
+# Eval results (keep mock, exclude large runs)
+eval_results/full_*
 
 # Secrets
 .env
