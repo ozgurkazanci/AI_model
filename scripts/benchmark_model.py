@@ -202,7 +202,7 @@ def run_benchmark(model_path: str, use_model: bool = False) -> dict:
                 inputs = tokenizer(text, return_tensors="pt")
                 with __import__("torch").no_grad():
                     outputs = model.generate(
-                        **inputs, max_new_tokens=512, temperature=0.7,
+                        **inputs, max_new_tokens=128, temperature=0.7,
                         do_sample=True, top_p=0.9,
                     )
                 response = tokenizer.decode(outputs[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True)

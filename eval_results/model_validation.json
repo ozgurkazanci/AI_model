@@ -1,0 +1,56 @@
+{
+  "model": "outputs/sft_local/final",
+  "passed": 3,
+  "total": 5,
+  "pass_rate": 60.0,
+  "avg_speed_tps": 4.8,
+  "total_tokens": 285,
+  "total_time_s": 59.1,
+  "results": [
+    {
+      "id": "tool_call_gen",
+      "passed": true,
+      "check": "tool_call",
+      "detail": "tool_found=True",
+      "tokens": 75,
+      "time_s": 15.3,
+      "response_preview": "Using PDK client to query available NMOS devices with gain band width handling.\n<tool_call>{\"name\": \"pdk.device_query\", \"arguments\": {\"model\": \"nmos_01v8\", \"parameters\": {\"VGS\": [2.5, 2.8], \"VDS\": [1."
+    },
+    {
+      "id": "sim_request",
+      "passed": true,
+      "check": "tool_call",
+      "detail": "tool_found=False",
+      "tokens": 42,
+      "time_s": 9.0,
+      "response_preview": "Running DC simulation to find the operating point.\n<tool_call>{\"name\": \"simscape.dc\", \"arguments\": {\"netlist\": \".subckt amp VDD VSS VIN VOUT\\n.ends\"}}</tool_call>"
+    },
+    {
+      "id": "spec_analysis",
+      "passed": false,
+      "check": "tool_call",
+      "detail": "tool_found=False",
+      "tokens": 64,
+      "time_s": 13.2,
+      "response_preview": "Let me check these details step by step.\nInitially, DC gain is 45 dB, looks reasonable.\nUGB is 120 MHz, within spec.\nPhase margin is 62 degrees. Good.\nTotal coverage: 92%.\nOverall rating: 82/100."
+    },
+    {
+      "id": "design_knowledge",
+      "passed": true,
+      "check": "keywords",
+      "detail": "keywords=2/5",
+      "tokens": 54,
+      "time_s": 11.1,
+      "response_preview": "To measure gm/Power, I'll simulate the circuit and take the average power over voltage.\n<tool_call>{\"name\": \"pdk.device_query\", \"arguments\": {\"model\": \"fet_01v\", \"query\": \"attribute gm attribute power"
+    },
+    {
+      "id": "corner_awareness",
+      "passed": false,
+      "check": "keywords",
+      "detail": "keywords=0/5",
+      "tokens": 50,
+      "time_s": 10.5,
+      "response_preview": "Let me check the supply side first.\n<tool_call>{\"name\": \"ccd.query\", \"arguments\": {\"model\": \"folded_cascode\", \"parameters\": {\"input_mismatch\": 0.0001}}}</trie>"
+    }
+  ]
+}

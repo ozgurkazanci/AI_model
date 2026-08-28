@@ -111,7 +111,8 @@ def validate_model(model_path: str) -> dict:
 
         status = "PASS" if passed else "FAIL"
         print(f"    [{status}] {check_detail} ({tokens} tok, {gen_time:.1f}s)")
-        print(f"    Response: {response[:120]}...")
+        safe_response = response[:120].encode("ascii", "replace").decode("ascii")
+        print(f"    Response: {safe_response}...")
 
         results.append({
             "id": vp["id"],

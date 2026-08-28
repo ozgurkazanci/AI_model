@@ -1,30 +1,30 @@
 {
   "model": "outputs/sft_local/final",
-  "overall_score": 0.09533333333333333,
+  "overall_score": 0.47150000000000003,
   "category_scores": {
-    "analog": 0.012000000000000002,
-    "digital": 0.212,
-    "spectre": 0.112,
-    "signoff": 0.012,
-    "layout": 0.212,
-    "reasoning": 0.112
+    "analog": 0.3113333333333333,
+    "digital": 0.742,
+    "spectre": 0.5249999999999999,
+    "signoff": 0.478,
+    "layout": 0.462,
+    "reasoning": 0.386
   },
-  "duration_s": 0.0,
+  "duration_s": 201.4948546886444,
   "results": [
     {
       "id": "analog_cs_amp",
       "category": "analog",
       "difficulty": "easy",
       "prompt": "Design a common-source amplifier with gain > 20 dB in sky130...",
-      "response_preview": "[VALIDATION MODE - no model loaded]",
+      "response_preview": "To design a common-source OTA (Over-the-Top) AM amplifier with gain > 20 dB, we'll use LLM-based too...",
       "scores": {
-        "keyword_score": 0.0,
-        "keyword_hits": "0/5",
+        "keyword_score": 0.2,
+        "keyword_hits": "1/5",
         "tool_score": 0.0,
-        "length_score": 0.06,
-        "word_count": 6,
+        "length_score": 0.59,
+        "word_count": 59,
         "structure_score": 0.0,
-        "overall": 0.012
+        "overall": 0.198
       }
     },
     {
@@ -32,15 +32,15 @@
       "category": "analog",
       "difficulty": "medium",
       "prompt": "Design a folded cascode OTA with GBW > 50 MHz and PM > 60 de...",
-      "response_preview": "[VALIDATION MODE - no model loaded]",
+      "response_preview": "I'll proceed step by step to design a folded cascode OTA meeting your requirements.\n1. Analyze input...",
       "scores": {
-        "keyword_score": 0.0,
-        "keyword_hits": "0/5",
+        "keyword_score": 0.6,
+        "keyword_hits": "3/5",
         "tool_score": 0.0,
-        "length_score": 0.06,
-        "word_count": 6,
+        "length_score": 0.87,
+        "word_count": 87,
         "structure_score": 0.0,
-        "overall": 0.012
+        "overall": 0.414
       }
     },
     {
@@ -48,15 +48,15 @@
       "category": "analog",
       "difficulty": "hard",
       "prompt": "Design a bandgap voltage reference with TC < 10 ppm/C across...",
-      "response_preview": "[VALIDATION MODE - no model loaded]",
+      "response_preview": "To design a bandgap voltage reference with TC < 10 ppm/C for -40 to 125C, we'll proceed step-by-step...",
       "scores": {
-        "keyword_score": 0.0,
-        "keyword_hits": "0/5",
+        "keyword_score": 0.4,
+        "keyword_hits": "2/5",
         "tool_score": 0.0,
-        "length_score": 0.06,
-        "word_count": 6,
+        "length_score": 0.81,
+        "word_count": 81,
         "structure_score": 0.0,
-        "overall": 0.012
+        "overall": 0.322
       }
     },
     {
@@ -64,15 +64,15 @@
       "category": "digital",
       "difficulty": "easy",
       "prompt": "Design a 4-bit synchronous up/down counter in Verilog....",
-      "response_preview": "[VALIDATION MODE - no model loaded]",
+      "response_preview": "Sure, I'll design a simple 4-bit synchronous up/down counter in Verilog. The counter will count from...",
       "scores": {
-        "keyword_score": 0.0,
-        "keyword_hits": "0/5",
+        "keyword_score": 0.8,
+        "keyword_hits": "4/5",
         "tool_score": 1.0,
-        "length_score": 0.06,
-        "word_count": 6,
-        "structure_score": 0.0,
-        "overall": 0.212
+        "length_score": 0.82,
+        "word_count": 82,
+        "structure_score": 0.5,
+        "overall": 0.784
       }
     },
     {
@@ -80,15 +80,15 @@
       "category": "digital",
       "difficulty": "medium",
       "prompt": "Design a UART receiver FSM with configurable baud rate....",
-      "response_preview": "[VALIDATION MODE - no model loaded]",
+      "response_preview": "To design a UART receiver FSM with configurable baud rate, we'll need to create two state machines: ...",
       "scores": {
-        "keyword_score": 0.0,
-        "keyword_hits": "0/5",
+        "keyword_score": 0.8,
+        "keyword_hits": "4/5",
         "tool_score": 1.0,
-        "length_score": 0.06,
-        "word_count": 6,
+        "length_score": 0.9,
+        "word_count": 90,
         "structure_score": 0.0,
-        "overall": 0.212
+        "overall": 0.7
       }
     },
     {
@@ -96,15 +96,15 @@
       "category": "spectre",
       "difficulty": "medium",
       "prompt": "How do I use Spectre STB analysis to check loop stability of...",
-      "response_preview": "[VALIDATION MODE - no model loaded]",
+      "response_preview": "To run a Spectre STB analysis on your amplifier, you'll need to follow these steps:\n\n1. Load the PDK...",
       "scores": {
-        "keyword_score": 0.0,
-        "keyword_hits": "0/5",
+        "keyword_score": 0.2,
+        "keyword_hits": "1/5",
         "tool_score": 0.0,
-        "length_score": 0.06,
-        "word_count": 6,
-        "structure_score": 0.0,
-        "overall": 0.012
+        "length_score": 0.83,
+        "word_count": 83,
+        "structure_score": 0.5,
+        "overall": 0.346
       }
     },
     {
@@ -112,15 +112,15 @@
       "category": "spectre",
       "difficulty": "hard",
       "prompt": "Set up PSS and PNoise analysis for a VCO in Spectre format....",
-      "response_preview": "[VALIDATION MODE - no model loaded]",
+      "response_preview": "To perform PSS (Phase Synchronization) and PNoise (Phase Noise) analysis on a VCO in Spectre format,...",
       "scores": {
-        "keyword_score": 0.0,
-        "keyword_hits": "0/5",
+        "keyword_score": 0.6,
+        "keyword_hits": "3/5",
         "tool_score": 1.0,
-        "length_score": 0.06,
-        "word_count": 6,
-        "structure_score": 0.0,
-        "overall": 0.212
+        "length_score": 0.82,
+        "word_count": 82,
+        "structure_score": 0.5,
+        "overall": 0.704
       }
     },
     {
@@ -128,15 +128,15 @@
       "category": "signoff",
       "difficulty": "medium",
       "prompt": "My layout has minimum spacing DRC errors near the guard ring...",
-      "response_preview": "[VALIDATION MODE - no model loaded]",
+      "response_preview": "To fix minimum spacing DRC errors near the guard ring, you'll need to adjust your design topology by...",
       "scores": {
-        "keyword_score": 0.0,
-        "keyword_hits": "0/5",
+        "keyword_score": 0.8,
+        "keyword_hits": "4/5",
         "tool_score": 0.0,
-        "length_score": 0.06,
-        "word_count": 6,
+        "length_score": 1.0,
+        "word_count": 101,
         "structure_score": 0.0,
-        "overall": 0.012
+        "overall": 0.52
       }
     },
     {
@@ -144,15 +144,15 @@
       "category": "signoff",
       "difficulty": "medium",
       "prompt": "LVS shows unmatched nets in my OTA layout. Debug strategy?...",
-      "response_preview": "[VALIDATION MODE - no model loaded]",
+      "response_preview": "To debug LVS (Lightwave Simulation) showing unmatched nets, follow a systematic approach:\n\n1. **Chec...",
       "scores": {
-        "keyword_score": 0.0,
-        "keyword_hits": "0/5",
+        "keyword_score": 0.4,
+        "keyword_hits": "2/5",
         "tool_score": 0.0,
-        "length_score": 0.06,
-        "word_count": 6,
-        "structure_score": 0.0,
-        "overall": 0.012
+        "length_score": 0.88,
+        "word_count": 88,
+        "structure_score": 0.5,
+        "overall": 0.436
       }
     },
     {
@@ -160,15 +160,15 @@
       "category": "layout",
       "difficulty": "medium",
       "prompt": "How should I layout a differential pair for minimum offset i...",
-      "response_preview": "[VALIDATION MODE - no model loaded]",
+      "response_preview": "Designing a differential pair with minimal offset is crucial for stable analog and mixed-signal CMOS...",
       "scores": {
         "keyword_score": 0.0,
         "keyword_hits": "0/5",
         "tool_score": 1.0,
-        "length_score": 0.06,
-        "word_count": 6,
-        "structure_score": 0.0,
-        "overall": 0.212
+        "length_score": 0.81,
+        "word_count": 81,
+        "structure_score": 0.5,
+        "overall": 0.462
       }
     },
     {
@@ -176,15 +176,15 @@
       "category": "reasoning",
       "difficulty": "hard",
       "prompt": "Is it feasible to achieve GBW > 1 GHz with power < 1 mW in s...",
-      "response_preview": "[VALIDATION MODE - no model loaded]",
+      "response_preview": "Designing a high-performance analog and mixed-signal CMOS integrated circuit (IC) with gigawatt spec...",
       "scores": {
-        "keyword_score": 0.0,
-        "keyword_hits": "0/5",
+        "keyword_score": 0.4,
+        "keyword_hits": "2/5",
         "tool_score": 1.0,
-        "length_score": 0.06,
-        "word_count": 6,
+        "length_score": 0.8,
+        "word_count": 80,
         "structure_score": 0.0,
-        "overall": 0.212
+        "overall": 0.52
       }
     },
     {
@@ -192,15 +192,15 @@
       "category": "reasoning",
       "difficulty": "hard",
       "prompt": "My amplifier meets specs at TT corner but fails at SS,125C. ...",
-      "response_preview": "[VALIDATION MODE - no model loaded]",
+      "response_preview": "The root cause here appears to be a mismatch between the input impedance (RI) specifications and the...",
       "scores": {
-        "keyword_score": 0.0,
-        "keyword_hits": "0/5",
+        "keyword_score": 0.2,
+        "keyword_hits": "1/5",
         "tool_score": 0.0,
-        "length_score": 0.06,
-        "word_count": 6,
+        "length_score": 0.86,
+        "word_count": 86,
         "structure_score": 0.0,
-        "overall": 0.012
+        "overall": 0.252
       }
     }
   ]
