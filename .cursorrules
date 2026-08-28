@@ -43,12 +43,25 @@
 - **16 verified circuits**: CS amp, inverter, RC filter, NMOS I-V, diff pair, ring osc (3+5 stage), bandgap, current mirror, cascode, source follower, active load, integrator, Widlar, temp sweep, voltage divider
 - **SFT data**: `data/sft/ngspice_real_v1.jsonl` + `ngspice_real_v2.jsonl` (16 examples from real simulation)
 
+## Cadence EDA Suite (WSL)
+
+- **WSL distro**: `Alma_EDA` (AlmaLinux)
+- **Base path**: `\\wsl.localhost\Alma_EDA\opt\eda\cadence\`  (Linux: `/opt/eda/cadence/`)
+- **Spectre 24.1**: `/opt/eda/cadence/SPECTRE241/tools.lnx86/spectre/bin/64bit/spectre` (270MB)
+- **Adapter**: `src/asic_ai/adapters/spectre_wsl.py` (WSL subprocess)
+- **Factory**: `get_adapter("spectre", binary_path="", work_dir="...")`
+- **Available tools**: SPECTRE241, IC231 (Virtuoso), PVS222 (DRC/LVS), QUANTUS231 (extraction), XCELUMMAIN2309 (Xcelium), DDI251, CONFRML232, MODUS231, SSV231, EMX20251, IC618
+- **Config**: `configs/eda_tools.yaml` (all paths + capabilities)
+- **Spectre-specific analyses**: STB (stability), PSS (periodic SS), PNoise, dcmatch
+- **Note**: Requires Cadence license for simulation; binary loads but lib deps need full LD_LIBRARY_PATH
+
 ## Environment
 
 - Python 3.11.9 on Windows 11
 - PyTorch 2.5.1+cpu (DirectML incompatible with 2.5)
 - transformers 5.16.1
 - KiCad 10.0 (ngspice.dll)
+- WSL Alma_EDA (Cadence EDA)
 - git push returns exit code 1 on PowerShell (check for `main -> main` in output)
 
 ## Project Commands
@@ -57,20 +70,24 @@
 PYTHONPATH=src python -m pytest tests/ -v          # Run tests (175 passed)
 PYTHONPATH=src python scripts/project_stats.py     # Show stats
 PYTHONPATH=src python scripts/demo_ai_ngspice.py   # E2E AI+ngspice demo
-PYTHONPATH=src python scripts/test_ngspice.py      # ngspice DLL test
+PYTHONPATH=src python scripts/demo_rl_ngspice.py   # RL env + ngspice
 PYTHONPATH=src python scripts/agent_ngspice.py     # Agent with real sim
+PYTHONPATH=src python scripts/verify_templates_ngspice.py  # Template verification
+PYTHONPATH=src python scripts/post_training_pipeline.py    # Post-train automation
 PYTHONPATH=src python scripts/training_monitor.py  # Check training
-PYTHONPATH=src python scripts/validate_trained_model.py  # Post-train validation
+PYTHONPATH=src python scripts/validate_trained_model.py    # Post-train validation
 PYTHONPATH=src python scripts/chat.py --model outputs/sft_local/final  # Chat
 ```
 
 ## File Organization
 
-- Source: `src/asic_ai/` (45 modules)
-- Scripts: `scripts/` (33 CLI tools)
+- Source: `src/asic_ai/` (47 modules)
+- Scripts: `scripts/` (37 CLI tools)
 - Tests: `tests/` (16 files, 175 passed)
-- Eval: `eval/tasks/` (70 tasks)
-- Data: `data/sft/` (train_final.jsonl = 369 train, canonical dataset)
-- Configs: `configs/training_profiles.yaml` (8 profiles)
+- Eval: `eval/tasks/` (74 tasks: 50 analog + 24 digital)
+- Data: `data/sft/` (train_final.jsonl = 378 train + 42 val = 420 total)
+- Configs: `configs/eda_tools.yaml`, `configs/training_profiles.yaml`
 - Cloud: `scripts/cloud/deploy_and_train.sh` (one-command deploy)
 - Docs: `docs/HANDOFF.md` is the comprehensive guide
+- Adapters: ngspice_shared (DLL), spectre_wsl (WSL), mock (test)
+
