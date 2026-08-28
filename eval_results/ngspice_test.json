@@ -1,0 +1,47 @@
+{
+  "dll_path": "C:\\Program Files\\KiCad\\10.0\\bin\\ngspice.dll",
+  "passed": 3,
+  "total": 3,
+  "results": [
+    {
+      "success": true,
+      "status": [
+        "Prepare Deck",
+        "Parse",
+        "Device Setup",
+        "dc: 3.0%",
+        "--ready--",
+        "--ready--"
+      ],
+      "output_count": 5,
+      "name": "resistor_divider"
+    },
+    {
+      "success": true,
+      "status": [
+        "Source Deck",
+        "Prepare Deck",
+        "Parse",
+        "Device Setup",
+        "op",
+        "ac",
+        "--ready--"
+      ],
+      "output_count": 5,
+      "name": "rc_filter"
+    },
+    {
+      "success": true,
+      "status": [
+        "Source Deck",
+        "Prepare Deck",
+        "Parse",
+        "Device Setup",
+        "dc: 19.9%",
+        "--ready--"
+      ],
+      "output_count": 5,
+      "name": "nmos_iv"
+    }
+  ]
+}
