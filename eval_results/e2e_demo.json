@@ -1,0 +1,39 @@
+{
+  "simulation": {
+    "common_source_amp": {
+      "description": "Common-Source NMOS Amplifier",
+      "signals": [
+        "sweep"
+      ],
+      "data_points": 0,
+      "sim_time_ms": 49,
+      "success": false
+    },
+    "cmos_inverter": {
+      "description": "CMOS Inverter Transfer Curve",
+      "signals": [
+        "sweep"
+      ],
+      "data_points": 181,
+      "sim_time_ms": 33,
+      "success": true
+    },
+    "bandgap_core": {
+      "description": "Simplified Bandgap Reference Core",
+      "signals": [
+        "sweep"
+      ],
+      "data_points": 166,
+      "sim_time_ms": 28,
+      "success": true
+    }
+  },
+  "model": {
+    "model": "outputs/sft_local/final",
+    "tokens": 216,
+    "gen_time_s": 107.1,
+    "speed_tps": 2.0,
+    "response_preview": "1. Analyze specs: DC gain > 20 dB, supply voltage >= 1.8V, load capacitance = 1pF\n2. Query PDK for NMOS components\n3. Select topologies based on available options\n4. Initial sizing: \n   - Choose appropriate NMOS type and width (e.g., nMOS, pMOS, BiCMOS)\n   - Calculate gm, id, and other key parameters (R, C, Vth)\n5. Simulate: \n   - Apply NMOS gate biasing\n   - Add source and drain resistors\n   - Test for open-circuit conditions and ripple\n6. Diagnose: \n   - Identify gain offset due to mismatched ",
+    "has_tool_call": false
+  }
+}

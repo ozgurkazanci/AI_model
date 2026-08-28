@@ -10,6 +10,12 @@ def get_adapter(backend: str = 'ngspice', **kwargs) -> SimulatorAdapter:
     
     if backend == 'ngspice':
         return NgspiceAdapter(config)
+    elif backend == 'ngspice_shared':
+        from asic_ai.adapters.ngspice_shared import NgspiceSharedAdapter
+        return NgspiceSharedAdapter(config)
+    elif backend == 'mock':
+        from asic_ai.adapters.mock import MockSimulatorAdapter
+        return MockSimulatorAdapter(config)
     elif backend == 'verilator':
         return VerilatorAdapter(config)
     elif backend == 'opensta':
