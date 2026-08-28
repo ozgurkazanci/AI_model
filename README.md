@@ -44,21 +44,22 @@ spec → topology → netlist → simulate → read result → diagnose → fix 
 AI_model/
 ├── src/asic_ai/
 │   ├── tool_interface/    # Frozen contract (DO NOT MODIFY)
-│   ├── adapters/          # Simulator backends (ngspice, nabla, ...)
+│   ├── adapters/          # Simulator backends (ngspice, nabla, mock)
 │   ├── agent/             # Agent loop, strategy, memory
 │   ├── optimizer/         # Numerical optimizer (Bayesian, CMA-ES)
 │   ├── reward/            # Reward function (partial credit, corners)
-│   ├── data/              # Data pipeline (trajectories, perturbation, SFT format)
-│   ├── tokenizer/         # Tokenizer extension (SI units, devices)
+│   ├── data/              # Data pipeline, trajectories, templates, SFT format
+│   ├── tokenizer/         # Tokenizer extension (195 domain tokens)
 │   ├── inference/         # Inference pipeline (runner, parser, engine)
-│   └── training/          # Training launchers (CPT, SFT, RL)
+│   └── training/          # Training launchers (CPT, SFT, RL/GRPO) + RL environment
 ├── eval/                  # 54 eval tasks (36 analog + 18 digital)
 ├── configs/               # All configuration (model, training, eval)
 ├── data/
-│   ├── examples/          # Gold-standard trajectories (OTA, LDO, bandgap)
+│   ├── sft/               # 223 SFT training examples (~483K tokens)
+│   ├── examples/          # Gold-standard trajectories (OTA, LDO, bandgap, counter)
 │   └── corpus_registry.yaml  # CPT source tracking with licenses
-├── scripts/               # CLI tools (baseline, SFT generation, validation)
-├── tests/                 # 113 tests (99 unit + 10 format/inference + 4 ngspice)
+├── scripts/               # 12 CLI tools
+├── tests/                 # 147 passed, 4 skipped (13 test files)
 └── docs/                  # Design docs (TR), tool contract, ngspice setup
 ```
 
@@ -92,20 +93,28 @@ CPT (domain knowledge) → SFT (agent behavior) → RL/GRPO (design skill)
 # Install
 pip install -e ".[dev]"
 
-# Run tests
+# Run tests (147 passed, 4 skipped)
 PYTHONPATH=src pytest tests/ -v
 
-# List all eval tasks
-PYTHONPATH=src python scripts/measure_baseline.py --dry-run
+# Run full pipeline demo (no GPU, no simulator needed)
+PYTHONPATH=src python scripts/demo_full_pipeline.py
+
+# Analyze existing training data
+PYTHONPATH=src python scripts/analyze_sft_data.py
+
+# Generate more SFT data from templates
+PYTHONPATH=src python scripts/augment_from_templates.py --variants 20
+
+# Preview tokenizer extension tokens
+PYTHONPATH=src python scripts/extend_tokenizer.py --test-only
+
+# Launch inference server (mock mode)
+PYTHONPATH=src python scripts/serve_model.py --model mock --port 8000
 
 # Generate SFT data (requires API key + ngspice)
 PYTHONPATH=src python scripts/generate_sft_data.py --mode distillation --tasks eval/tasks/analog/
 
-# Validate SFT data
-PYTHONPATH=src python scripts/validate_sft_data.py --input data/sft/output.jsonl
-
 # Launch training (requires GPU)
-python -m asic_ai.training.cpt --config configs/training/cpt_axolotl.yaml
 python -m asic_ai.training.sft --config configs/training/sft_axolotl.yaml
 python -m asic_ai.training.rl_grpo --config configs/training/rl_grpo.yaml --dry-run
 ```
