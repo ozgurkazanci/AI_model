@@ -1,6 +1,7 @@
-"""ngspice smoke test — verifies the adapter works with a real simulation.
+"""ngspice smoke tests — verifies ngspice works on this system.
 
-Skip automatically if ngspice is not installed on PATH.
+Uses the shared library (DLL) from KiCad if available,
+falls back to binary on PATH.
 """
 from __future__ import annotations
 
@@ -11,11 +12,19 @@ from pathlib import Path
 
 import pytest
 
-NGSPICE_AVAILABLE = shutil.which("ngspice") is not None
+# Check for ngspice DLL (KiCad) or binary
+try:
+    from asic_ai.adapters.ngspice_shared import find_ngspice_dll
+    HAS_DLL = find_ngspice_dll() is not None
+except ImportError:
+    HAS_DLL = False
+
+HAS_BINARY = shutil.which("ngspice") is not None
+HAS_NGSPICE = HAS_DLL or HAS_BINARY
 
 pytestmark = pytest.mark.skipif(
-    not NGSPICE_AVAILABLE,
-    reason="ngspice not installed or not on PATH",
+    not HAS_NGSPICE,
+    reason="ngspice not available (no DLL or binary)",
 )
 
 MINIMAL_MODELS = """\
@@ -25,56 +34,98 @@ MINIMAL_MODELS = """\
 
 
 class TestNgspiceSmoke:
-    """Smoke tests that require ngspice binary."""
+    """Smoke tests using ngspice shared library."""
 
-    def test_ngspice_version(self):
-        result = subprocess.run(
-            ["ngspice", "--version"],
-            capture_output=True, text=True, timeout=10,
-        )
-        output = result.stdout + result.stderr
-        assert "ngspice" in output.lower()
+    def test_ngspice_dll_loads(self):
+        """DLL loads and initializes."""
+        if not HAS_DLL:
+            pytest.skip("No ngspice DLL")
+        from asic_ai.adapters.ngspice_shared import NgspiceSharedAdapter
+        from asic_ai.adapters.base import AdapterConfig
+        with tempfile.TemporaryDirectory() as td:
+            adapter = NgspiceSharedAdapter(AdapterConfig(binary_path="", work_dir=td))
+            assert adapter._lib is not None
 
     def test_simple_dc_sweep(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            model_path = Path(tmpdir) / "models.spice"
-            output_file = Path(tmpdir) / "output.txt"
-            netlist_path = Path(tmpdir) / "test.spice"
+        """Run a simple DC sweep via shared library."""
+        if not HAS_DLL:
+            pytest.skip("No ngspice DLL")
+        from asic_ai.adapters.ngspice_shared import NgspiceSharedAdapter
+        from asic_ai.adapters.base import AdapterConfig
+        from asic_ai.tool_interface.schema import SimParams
 
-            model_path.write_text(MINIMAL_MODELS)
-
-            netlist = f"""\
-* CMOS Inverter DC Sweep
-.include {str(model_path).replace(chr(92), '/')}
-VDD vdd 0 dc 1.8
-VIN in 0 dc 0.9
-XM1 out in vdd vdd sky130_fd_pr__pfet_01v8 W=1u L=150n
-XM2 out in 0 0 sky130_fd_pr__nfet_01v8 W=0.5u L=150n
-.dc VIN 0 1.8 0.01
-.control
-run
-wrdata {str(output_file).replace(chr(92), '/')} v(out)
-.endc
+        with tempfile.TemporaryDirectory() as td:
+            adapter = NgspiceSharedAdapter(AdapterConfig(binary_path="", work_dir=td))
+            cir = Path(td) / "inv.cir"
+            cir.write_text(f"""\
+* CMOS Inverter
+{MINIMAL_MODELS}
+VDD vdd 0 DC 1.8
+Vin in 0 DC 0
+M1 out in 0 0 sky130_fd_pr__nfet_01v8 W=1u L=0.15u
+M2 out in vdd vdd sky130_fd_pr__pfet_01v8 W=2u L=0.15u
+.dc Vin 0 1.8 0.01
 .end
-"""
-            netlist_path.write_text(netlist)
+""")
+            result = adapter.dc(str(cir), SimParams(analysis_type="dc"))
+            points = sum(len(s.x_values) for s in result.sweeps.values())
+            assert points > 10, f"Expected >10 data points, got {points}"
 
-            result = subprocess.run(
-                ["ngspice", "-b", str(netlist_path)],
-                capture_output=True, text=True, timeout=30, cwd=tmpdir,
-            )
+    def test_ac_analysis(self):
+        """Run an AC analysis."""
+        if not HAS_DLL:
+            pytest.skip("No ngspice DLL")
+        from asic_ai.adapters.ngspice_shared import NgspiceSharedAdapter
+        from asic_ai.adapters.base import AdapterConfig
+        from asic_ai.tool_interface.schema import SimParams
 
-            assert output_file.exists(), f"No output. ngspice: {result.stderr}"
-            lines = [l for l in output_file.read_text().split("\n") if l.strip() and not l.startswith("#")]
-            assert len(lines) > 10
+        with tempfile.TemporaryDirectory() as td:
+            adapter = NgspiceSharedAdapter(AdapterConfig(binary_path="", work_dir=td))
+            cir = Path(td) / "rc.cir"
+            cir.write_text("""\
+* RC Filter
+V1 in 0 AC 1
+R1 in out 1k
+C1 out 0 1n
+.ac dec 10 1 1G
+.end
+""")
+            result = adapter.ac(str(cir), SimParams(analysis_type="ac"))
+            assert len(result.frequencies) > 0
+
+    def test_transient(self):
+        """Run a transient simulation."""
+        if not HAS_DLL:
+            pytest.skip("No ngspice DLL")
+        from asic_ai.adapters.ngspice_shared import NgspiceSharedAdapter
+        from asic_ai.adapters.base import AdapterConfig
+        from asic_ai.tool_interface.schema import SimParams
+
+        with tempfile.TemporaryDirectory() as td:
+            adapter = NgspiceSharedAdapter(AdapterConfig(binary_path="", work_dir=td))
+            cir = Path(td) / "tran.cir"
+            cir.write_text("""\
+* Pulse Response
+V1 in 0 PULSE(0 1.8 0 1n 1n 5u 10u)
+R1 in out 1k
+C1 out 0 1n
+.tran 0.1u 20u
+.end
+""")
+            result = adapter.tran(str(cir), SimParams(analysis_type="tran"))
+            assert len(result.time) > 0
 
 
 class TestAdapterImport:
-    """Unit tests that don't require ngspice binary."""
+    """Unit tests that don't require ngspice."""
 
     def test_ngspice_adapter_exists(self):
         from asic_ai.adapters.ngspice import NgspiceAdapter
         assert NgspiceAdapter is not None
+
+    def test_ngspice_shared_adapter_exists(self):
+        from asic_ai.adapters.ngspice_shared import NgspiceSharedAdapter
+        assert NgspiceSharedAdapter is not None
 
     def test_nabla_adapter_exists(self):
         from asic_ai.adapters.nabla import NablaAdapter
