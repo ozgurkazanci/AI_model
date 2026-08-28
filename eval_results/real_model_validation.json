@@ -1,11 +1,11 @@
 {
-  "model": "Qwen/Qwen2.5-0.5B-Instruct",
+  "model": "outputs/sft_local/final",
   "device": "CPU",
-  "param_count_m": 494,
-  "load_time_s": 5.0,
-  "gen_tokens": 256,
-  "gen_time_s": 43.6,
-  "tok_per_sec": 5.9,
+  "param_count_m": 503,
+  "load_time_s": 6.3,
+  "gen_tokens": 128,
+  "gen_time_s": 28.2,
+  "tok_per_sec": 4.5,
   "tool_calls_found": 0,
   "sft_format_valid": true,
   "pipeline_status": "ALL_PASSED"

@@ -1,0 +1,17 @@
+# ASIC-AI Requirements
+# Core
+pydantic>=2.0
+pyyaml>=6.0
+numpy>=1.24
+jsonschema>=4.0
+
+# ML / Inference
+torch>=2.5.0
+transformers>=5.0
+accelerate>=1.0
+sentencepiece
+safetensors
+protobuf
+
+# Training (install with: pip install -r requirements.txt -r requirements-train.txt)
+# See requirements-train.txt for GPU training dependencies

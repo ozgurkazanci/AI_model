@@ -1,0 +1,24 @@
+# ASIC-AI Training Requirements (GPU)
+# Install: pip install -r requirements.txt -r requirements-train.txt
+
+# LoRA / PEFT
+peft>=0.12
+
+# RL Training
+trl>=0.15
+
+# Dataset handling
+datasets>=3.0
+
+# Experiment tracking
+wandb
+
+# Serving
+fastapi
+uvicorn
+
+# Optional: Flash Attention (NVIDIA only)
+# flash-attn --no-build-isolation
+
+# Optional: AMD GPU (Windows)
+# torch-directml
