@@ -84,7 +84,7 @@ bash scripts/cloud/train_sft_large_lambda.sh
 |------|-------|---------|
 | `tool_interface/schema.py` | 212 | All Pydantic v2 models. **FROZEN.** |
 | `data/format.py` | ~300 | System prompt + 15 tool definitions. **MOST CRITICAL.** |
-| `data/templates.py` | ~250 | 6 parameterized SPICE circuit templates |
+| `data/templates.py` | ~500 | 9 parameterized SPICE circuit templates |
 | `data/trajectory.py` | ~120 | Trajectory/TrajectoryStep/ToolCall models |
 | `training/rl_env.py` | ~280 | Gym-like RL environment |
 | `training/rl_grpo.py` | 313 | Full GRPO trainer with TRL |
@@ -94,14 +94,16 @@ bash scripts/cloud/train_sft_large_lambda.sh
 | `reward/partial_credit.py` | ~150 | Reward with logarithmic distance |
 | `tokenizer/domain_tokens.py` | ~200 | 195 domain-specific tokens |
 
-### Scripts (17 total)
+### Scripts (22 total)
 | Script | Purpose |
 |--------|---------|
 | `demo_full_pipeline.py` | E2E pipeline demo (no deps) |
 | `run_agent.py` | Multi-step agent with real LLM |
+| `run_eval.py` | Evaluation harness (all 54 tasks) |
 | `compare_models.py` | Base vs fine-tuned comparison |
 | `finetune_local.py` | Local SFT with LoRA (CPU/GPU) |
 | `merge_lora.py` | Merge LoRA into base model |
+| `export_gguf.py` | Export model to GGUF format |
 | `validate_with_real_model.py` | Pipeline validation with real LLM |
 | `local_inference.py` | GGUF/DirectML inference |
 | `serve_model.py` | FastAPI inference server |
