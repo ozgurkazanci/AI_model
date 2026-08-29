@@ -60,7 +60,7 @@ AI_model/
 │   │   └── val_final.jsonl    # 42 validation
 │   ├── examples/          # Gold-standard trajectories (OTA, LDO, bandgap, counter)
 │   └── corpus_registry.yaml  # CPT source tracking with licenses
-├── scripts/               # 38 CLI tools
+├── scripts/               # 48 CLI tools
 ├── tests/                 # 242 passed, 0 skipped (17 test files)
 └── docs/                  # Design docs, handoff guide, tool contract
 ```

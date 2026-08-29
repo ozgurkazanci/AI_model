@@ -101,8 +101,8 @@ PYTHONPATH=src python scripts/chat.py --model outputs/sft_local/final  # Chat
 
 ## File Organization
 
-- Source: `src/asic_ai/` (47 modules)
-- Scripts: `scripts/` (44 CLI tools)
+- Source: `src/asic_ai/` (48 modules)
+- Scripts: `scripts/` (48 CLI tools)
 - Tests: `tests/` (17 files, 242 passed)
 - Eval: `eval/tasks/` (74 tasks: 50 analog + 24 digital)
 - Data: `data/sft/` (15 files, 1032 total: 929 train + 103 val)

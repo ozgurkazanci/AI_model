@@ -180,10 +180,10 @@ PYTHONPATH=src python scripts/demo_rl_ngspice.py
 ## Project Stats
 
 ```
-v0.3.0 | 55 commits | 242 tests | 0 skip
+v0.3.0 | 75 commits | 242 tests | 0 skip
 432 SFT examples | 74 eval tasks (50 analog + 24 digital)
 13 templates | 16 ngspice circuits | 3 adapters
-~40 scripts | ~47 modules | ~17,000 lines
+~48 scripts | ~48 modules | ~20,000 lines
 ```
 
 ## What's Next (Priority Order)
