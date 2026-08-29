@@ -170,6 +170,85 @@ pdk:
     models_hspice: "/opt/eda/PDK/CRN65GPNEW/CRN65GPNEW/models/hspice"
     corner_file: "crn65gplus_2d5_lk_v1d0.scs"
     corners: [tt, ss, ff, sf, fs]
+
+    # --------------------------------------------------------------
+    # ngspice plumbing for the HSPICE model deck.
+    #
+    # NDA: this block is a PATH REFERENCE ONLY. No TSMC model parameter
+    # value is stored in this repository, and none may be added here.
+    # Device names and corner section names are public interface.
+    #
+    # Consumed by src/asic_ai/adapters/pdk_deck.py. When the deck is
+    # absent every PDK-dependent code path degrades to PDK-free
+    # simulation and every PDK-dependent test skips.
+    #
+    # ngspice cannot open a UNC path in a .lib line and truncates any
+    # path at the first space, so the deck is copied once into a short,
+    # space-free cache outside the repo (%LOCALAPPDATA%\asic_ai\pdk,
+    # override with ASIC_AI_PDK_CACHE). That cache is a verbatim copy of
+    # NDA foundry data: keep it out of git and purge it by deleting it.
+    # --------------------------------------------------------------
+    ngspice:
+      enabled: true
+      description: "TSMC 65nm CRN65GPLUS HSPICE BSIM4 deck (NDA)"
+      deck_env_var: "ASIC_AI_TSMC65_DECK"
+      deck_candidates:
+        - "\\\\wsl.localhost\\Alma_EDA\\opt\\eda\\PDK\\CRN65GPNEW\\CRN65GPNEW\\models\\hspice\\crn65gplus_2d5_lk_v1d0.l"
+        - "/opt/eda/PDK/CRN65GPNEW/CRN65GPNEW/models/hspice/crn65gplus_2d5_lk_v1d0.l"
+      cache_name: "tsmc65"
+      # HSPICE compatibility. Verified working: hs, hsa, all, unset.
+      # Do NOT use "ps": it turns ".lib file section" into a plain include
+      # and the deck's self-referential section calls then fail.
+      ngbehavior: "hsa"
+      # The 1.0V core devices live in the BARE corner sections. The *_18
+      # sections are the 1.8V thick-oxide devices, not the core.
+      corner_sections:
+        tt: "TT"
+        ss: "SS"
+        ff: "FF"
+        sf: "SF"
+        fs: "FS"
+      # Statistical Monte Carlo. "stat" defines the global process
+      # parameters that "MC" consumes, so it must come first.
+      mc_sections: ["stat", "MC"]
+      mc_params:
+        parn1: "agauss(0,1,1)"
+        parn2: "agauss(0,1,1)"
+        parp1: "agauss(0,1,1)"
+        parp2: "agauss(0,1,1)"
+      # Every *_mac subckt is declared l=length w=width and the deck
+      # defines neither symbol. Instance l=/w= override these dummies.
+      global_params:
+        length: "1u"
+        width: "1u"
+      # The corner sections draw local mismatch from AGAUSS at every
+      # parse, so a nominal run varies by ~8% unless sigma is pinned.
+      nominal_instance_params:
+        sigma: "0"
+      supply_voltage: 1.0
+      corner_pvt:
+        tt: {voltage: 1.0, temperature: 27.0}
+        ss: {voltage: 0.9, temperature: -40.0}
+        ff: {voltage: 1.1, temperature: 125.0}
+        sf: {voltage: 1.0, temperature: 27.0}
+        fs: {voltage: 1.0, temperature: 27.0}
+      # Instantiable SUBCIRCUIT names (X instances). The bare .model
+      # names (nch, pch) exist but bypass the wrapper's computed
+      # ad/as/pd/ps and mismatch, so AC and transient results would be
+      # wrong. Always instantiate the _mac wrappers.
+      devices:
+        nmos: "nch_mac"
+        pmos: "pch_mac"
+        nmos_hvt: "nch_hvt_mac"
+        pmos_hvt: "pch_hvt_mac"
+        nmos_lvt: "nch_lvt_mac"
+        pmos_lvt: "pch_lvt_mac"
+        nmos_18: "nch_18_mac"
+        pmos_18: "pch_18_mac"
+        nmos_25: "nch_25_mac"
+        pmos_25: "pch_25_mac"
+        nmos_33: "nch_33_mac"
+        pmos_33: "pch_33_mac"
     devices:
       nmos: "nch (SVT), nch_lvt, nch_hvt, nch_25, nch_na"
       pmos: "pch (SVT), pch_lvt, pch_hvt, pch_25"

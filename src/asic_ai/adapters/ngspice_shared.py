@@ -1,7 +1,44 @@
 """ngspice shared library adapter using KiCad's DLL via ctypes.
 
-Uses the ngspice shared library API for in-process simulation.
-Works with KiCad's bundled ngspice.dll on Windows.
+Runs ngspice in-process through the shared library API and extracts REAL
+numeric vectors with ngGet_Vec_Info. Nothing here fabricates data: if a run
+fails, or if the requested data is not present, an NgspiceError is raised.
+
+Why this file is written the way it is
+--------------------------------------
+ngspice's shared library has three failure modes that all produce confident,
+well formed, WRONG numbers. Each one is handled explicitly below:
+
+  1. STALE PLOT. A netlist that fails to parse does not unload the previously
+     loaded circuit, and "run" happily re-runs the old one into a fresh plot.
+     Return codes stay 0. Mitigation: full teardown ("destroy all" plus
+     "remcirc" until empty) at the START of every simulation, then require a
+     NEW plot whose name is not 'const'.
+  2. SWALLOWED FIRST LINE. SPICE consumes line 1 as the deck title. A model
+     generated netlist that starts with a device line loses that device with no
+     diagnostic at all, and the answer comes back as clean zeros. Mitigation:
+     a title comment is prepended unconditionally, so the caller's first line is
+     never eaten.
+  3. NOISE PLOT SPLIT. ".noise" creates two plots and ngSpice_CurPlot() returns
+     the totals plot, not the spectrum. Mitigation: noise plots are identified
+     by their vector names, not by CurPlot().
+
+Process singleton
+-----------------
+There is exactly one ngspice instance per process. Calling ngSpice_Init again
+rebinds the console callbacks globally, which silently blinds any earlier
+adapter, and letting the object that owns the CFUNCTYPE trampolines be garbage
+collected while ngspice still holds them crashes the process with an access
+violation. So the library handle and its callbacks live in a module level
+singleton that is never released.
+
+Known limitations, stated plainly
+---------------------------------
+  - config.timeout is NOT enforced on this path. ngSpice_Command("run") blocks
+    synchronously inside the DLL and cannot be interrupted from Python. Cap
+    .tran tstop/tstep at the caller.
+  - Process corner variation requires a configured PDK deck (see pdk_deck.py).
+    Without one, corners() varies temperature and supply only, and says so.
 """
 from __future__ import annotations
 
@@ -9,9 +46,11 @@ import ctypes
 import logging
 import os
 import re
-import tempfile
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any, Iterable, Optional, Sequence
 
+from asic_ai.adapters import measure, pdk_deck
 from asic_ai.adapters.base import SimulatorAdapter, AdapterConfig
 from asic_ai.tool_interface.schema import (
     DCResult, ACResult, TranResult, NoiseResult, StabilityResult,
@@ -20,16 +59,18 @@ from asic_ai.tool_interface.schema import (
 
 log = logging.getLogger(__name__)
 
-_SEND_CHAR = ctypes.CFUNCTYPE(
-    ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.POINTER(ctypes.c_int)
-)
-_SEND_STAT = ctypes.CFUNCTYPE(
-    ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.POINTER(ctypes.c_int)
-)
-_CTRL_EXIT = ctypes.CFUNCTYPE(
-    ctypes.c_int, ctypes.c_int, ctypes.c_bool, ctypes.c_bool,
-    ctypes.c_int, ctypes.POINTER(ctypes.c_int)
-)
+# sharedspice.h vector flags. ALWAYS test with a bitwise AND: the observed
+# values are 129 and 130 because VF_PERMANENT (128) is set on everything.
+VF_REAL = 1
+VF_COMPLEX = 2
+VF_PERMANENT = 128
+
+# sharedspice.h v_type values, kept for reference / debugging.
+VTYPE_TIME = 1
+VTYPE_FREQUENCY = 2
+VTYPE_VOLTAGE = 3
+VTYPE_CURRENT = 4
+VTYPE_NOISE_DENSITY = 5
 
 DEFAULT_DLL_PATHS = [
     r"C:\Program Files\KiCad\10.0\bin\ngspice.dll",
@@ -37,142 +78,1148 @@ DEFAULT_DLL_PATHS = [
     r"C:\Program Files\KiCad\8.0\bin\ngspice.dll",
 ]
 
+NETLIST_TITLE = "* asic-ai netlist"
+
+# Console substrings that mean the run produced nothing trustworthy.
+_FATAL_MARKERS = (
+    "circuit not parsed",
+    "could not find a valid modelname",
+    "unknown parameter",
+    "undefined parameter",
+    "formula() error",
+    "error on line",
+    "no job (tran, ac, op etc.) defined",
+    "run simulation not started",
+    ".end statement is missing",
+    "aren't any circuits loaded",
+    "simulation interrupted due to error",
+    "run simulation(s) aborted",
+    "doanalyses:",
+    "dc solution failed",
+    "timestep too small",
+    "could not find library file",
+    "could not find include file",
+    "cannot recover and awaits",
+)
+
+# Console substrings that are suspicious but do NOT invalidate the run. ngspice
+# falls through gmin stepping and source stepping to a transient operating
+# point rescue and often converges anyway; rejecting these throws away good
+# runs.
+_WARN_MARKERS = (
+    "singular matrix",
+    "gmin stepping failed",
+    "source stepping failed",
+    "transient op",
+)
+
+_ERROR_LINE_RE = re.compile(r"error on line\s+(\d+)", re.IGNORECASE)
+
+# Temperature attached to a corner NAME when the caller supplies nothing else
+# and no PDK is configured. Same convention as data/pdk_knowledge.py. Voltage
+# stays unspecified (0.0) because a bare corner name genuinely says nothing
+# about the supply, and forcing one would corrupt an IO-voltage netlist.
+_GENERIC_CORNER_TEMPS = {
+    "tt": 27.0, "ss": -40.0, "ff": 125.0, "sf": 27.0, "fs": 27.0,
+}
+
+
+class NgspiceError(RuntimeError):
+    """A simulation failed, or produced no usable data."""
+
 
 def find_ngspice_dll() -> str | None:
     """Auto-detect ngspice DLL from KiCad installation."""
+    env = os.environ.get("ASIC_AI_NGSPICE_DLL")
+    if env and Path(env).exists():
+        return env
     for p in DEFAULT_DLL_PATHS:
         if Path(p).exists():
             return p
     return None
 
 
-class NgspiceSharedAdapter(SimulatorAdapter):
-    """ngspice adapter using shared library (DLL) via ctypes."""
+# ---------------------------------------------------------------------------
+# ctypes plumbing (exactly per sharedspice.h)
+# ---------------------------------------------------------------------------
 
-    def __init__(self, config: AdapterConfig):
-        super().__init__(config)
-        self._output: list[str] = []
-        self._lib = None
+class ngcomplex_t(ctypes.Structure):
+    _fields_ = [
+        ("cx_real", ctypes.c_double),
+        ("cx_imag", ctypes.c_double),
+    ]
 
-        dll_path = config.binary_path
-        if not dll_path or not Path(dll_path).exists():
-            dll_path = find_ngspice_dll()
-        if not dll_path:
-            raise FileNotFoundError("ngspice.dll not found. Install KiCad or set binary_path.")
 
-        dll_dir = str(Path(dll_path).parent)
-        lib_dir = str(Path(dll_path).parent.parent / "lib" / "ngspice")
-        os.environ["SPICE_LIB_DIR"] = lib_dir
-        if dll_dir not in os.environ.get("PATH", ""):
-            os.environ["PATH"] = dll_dir + ";" + os.environ.get("PATH", "")
+class vector_info(ctypes.Structure):
+    _fields_ = [
+        ("v_name", ctypes.c_char_p),
+        ("v_type", ctypes.c_int),
+        ("v_flags", ctypes.c_short),
+        ("v_realdata", ctypes.POINTER(ctypes.c_double)),
+        ("v_compdata", ctypes.POINTER(ngcomplex_t)),
+        ("v_length", ctypes.c_int),
+    ]
 
-        self._lib = ctypes.CDLL(dll_path)
-        self._init_callbacks()
-        log.info(f"ngspice shared library loaded: {dll_path}")
 
-    def _init_callbacks(self):
-        @_SEND_CHAR
-        def on_char(msg, id_, ud):
+pvector_info = ctypes.POINTER(vector_info)
+
+_SEND_CHAR = ctypes.CFUNCTYPE(
+    ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_void_p
+)
+_SEND_STAT = ctypes.CFUNCTYPE(
+    ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_void_p
+)
+_CTRL_EXIT = ctypes.CFUNCTYPE(
+    ctypes.c_int, ctypes.c_int, ctypes.c_bool, ctypes.c_bool,
+    ctypes.c_int, ctypes.c_void_p
+)
+
+
+def _charpp_to_list(ptr) -> list[str]:
+    """Decode a NULL terminated char** returned by ngspice."""
+    out: list[str] = []
+    if not ptr:
+        return out
+    i = 0
+    while True:
+        item = ptr[i]
+        if not item:
+            break
+        out.append(item.decode("utf-8", errors="replace"))
+        i += 1
+        if i > 100000:  # paranoia against a missing terminator
+            break
+    return out
+
+
+def _clean_console_line(line: str) -> str:
+    """Strip the optional 'stdout '/'stderr ' tag and CR that ngspice emits."""
+    s = line.replace("\r", "").strip()
+    for prefix in ("stdout ", "stderr "):
+        if s.startswith(prefix):
+            s = s[len(prefix):]
+            break
+    return s.strip()
+
+
+class _NgspiceLibrary:
+    """Process wide singleton wrapper around ngspice.dll.
+
+    Never instantiate directly, use _NgspiceLibrary.instance(). The callbacks
+    are stored on the instance and the instance is stored in a module global,
+    so neither can be collected while ngspice still holds pointers to them.
+    """
+
+    _instance: Optional["_NgspiceLibrary"] = None
+
+    def __init__(self, dll_path: str):
+        self.dll_path = dll_path
+        self.console: list[str] = []
+        self.exit_events: list[tuple[int, bool, bool]] = []
+
+        dll_dir = Path(dll_path).parent
+        lib_dir = dll_dir.parent / "lib" / "ngspice"
+        os.environ["SPICE_LIB_DIR"] = str(lib_dir)
+        if str(dll_dir) not in os.environ.get("PATH", ""):
+            os.environ["PATH"] = str(dll_dir) + os.pathsep + os.environ.get("PATH", "")
+        if hasattr(os, "add_dll_directory") and dll_dir.exists():
             try:
-                self._output.append(msg.decode("utf-8", errors="replace").strip())
+                self._dll_dir_cookie = os.add_dll_directory(str(dll_dir))
+            except (OSError, AttributeError):  # pragma: no cover
+                self._dll_dir_cookie = None
+
+        self.dll = ctypes.CDLL(dll_path)
+        self._declare_signatures()
+        self._install_callbacks()
+
+    # -- setup -------------------------------------------------------------
+
+    def _declare_signatures(self) -> None:
+        d = self.dll
+        d.ngSpice_Init.restype = ctypes.c_int
+        d.ngSpice_Init.argtypes = [
+            _SEND_CHAR, _SEND_STAT, _CTRL_EXIT,
+            ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p,
+        ]
+        d.ngSpice_Command.restype = ctypes.c_int
+        d.ngSpice_Command.argtypes = [ctypes.c_char_p]
+        d.ngSpice_Circ.restype = ctypes.c_int
+        d.ngSpice_Circ.argtypes = [ctypes.POINTER(ctypes.c_char_p)]
+        d.ngSpice_CurPlot.restype = ctypes.c_char_p
+        d.ngSpice_CurPlot.argtypes = []
+        d.ngSpice_AllPlots.restype = ctypes.POINTER(ctypes.c_char_p)
+        d.ngSpice_AllPlots.argtypes = []
+        d.ngSpice_AllVecs.restype = ctypes.POINTER(ctypes.c_char_p)
+        d.ngSpice_AllVecs.argtypes = [ctypes.c_char_p]
+        # Without an explicit restype ctypes truncates this 64 bit pointer to
+        # a 32 bit int and every vector read lands on a garbage address.
+        d.ngGet_Vec_Info.restype = pvector_info
+        d.ngGet_Vec_Info.argtypes = [ctypes.c_char_p]
+        d.ngSpice_running.restype = ctypes.c_bool
+        d.ngSpice_running.argtypes = []
+
+    def _install_callbacks(self) -> None:
+        @_SEND_CHAR
+        def on_char(msg, ident, userdata):
+            try:
+                self.console.append(msg.decode("utf-8", errors="replace"))
             except Exception:
                 pass
             return 0
 
         @_SEND_STAT
-        def on_stat(msg, id_, ud):
+        def on_stat(msg, ident, userdata):
             return 0
 
         @_CTRL_EXIT
-        def on_exit(status, immediate, quit_, id_, ud):
+        def on_exit(status, immediate, quit_, ident, userdata):
+            self.exit_events.append((int(status), bool(immediate), bool(quit_)))
             return 0
 
-        self._cbs = (on_char, on_stat, on_exit)
-        ret = self._lib.ngSpice_Init(on_char, on_stat, on_exit, None, None, None, None)
-        if ret != 0:
-            raise RuntimeError(f"ngSpice_Init failed: {ret}")
+        # Held forever: ngspice keeps raw pointers to these trampolines.
+        self._callbacks = (on_char, on_stat, on_exit)
+        rc = self.dll.ngSpice_Init(on_char, on_stat, on_exit, None, None, None, None)
+        if rc != 0:
+            raise RuntimeError(f"ngSpice_Init failed: {rc}")
 
-    def _cmd(self, cmd: str) -> int:
-        return self._lib.ngSpice_Command(cmd.encode("utf-8"))
+    @classmethod
+    def instance(cls, dll_path: str) -> "_NgspiceLibrary":
+        if cls._instance is None:
+            cls._instance = _NgspiceLibrary(dll_path)
+        elif os.path.normcase(cls._instance.dll_path) != os.path.normcase(dll_path):
+            log.warning(
+                "ngspice already initialised from %s; ignoring request for %s "
+                "(one shared library instance per process)",
+                cls._instance.dll_path, dll_path,
+            )
+        return cls._instance
 
-    def _simulate(self, netlist: str) -> list[str]:
-        self._output.clear()
-        tmp = tempfile.NamedTemporaryFile(
-            mode="w", suffix=".cir", delete=False,
-            dir=str(self.work_dir), encoding="utf-8",
+    # -- primitives --------------------------------------------------------
+
+    def clear_console(self) -> None:
+        self.console.clear()
+
+    def console_lines(self) -> list[str]:
+        return [_clean_console_line(x) for x in self.console]
+
+    def command(self, cmd: str) -> int:
+        return int(self.dll.ngSpice_Command(cmd.encode("utf-8")))
+
+    def load_circuit(self, lines: Sequence[str]) -> int:
+        """Load a netlist from memory. No temp file, no path length limits."""
+        buf = (ctypes.c_char_p * (len(lines) + 1))()
+        for i, line in enumerate(lines):
+            buf[i] = line.encode("utf-8")
+        buf[len(lines)] = None
+        return int(self.dll.ngSpice_Circ(buf))
+
+    def cur_plot(self) -> Optional[str]:
+        raw = self.dll.ngSpice_CurPlot()
+        if not raw:
+            return None
+        return raw.decode("utf-8", errors="replace")
+
+    def all_plots(self) -> list[str]:
+        return _charpp_to_list(self.dll.ngSpice_AllPlots())
+
+    def all_vecs(self, plot: str) -> list[str]:
+        return _charpp_to_list(self.dll.ngSpice_AllVecs(plot.encode("utf-8")))
+
+    def vector(self, fq_name: str) -> Optional[list]:
+        """Read one vector by its fully qualified '{plot}.{vector}' name.
+
+        Returns a list of float for a real vector, a list of complex for a
+        complex one, or None when the vector does not exist.
+        """
+        ptr = self.dll.ngGet_Vec_Info(fq_name.encode("utf-8"))
+        if not ptr:
+            return None
+        info = ptr.contents
+        n = int(info.v_length)
+        if n <= 0:
+            return []
+        flags = int(info.v_flags)
+        if flags & VF_COMPLEX:
+            if not info.v_compdata:
+                return None
+            data = info.v_compdata
+            return [complex(data[i].cx_real, data[i].cx_imag) for i in range(n)]
+        if not info.v_realdata:
+            return None
+        data = info.v_realdata
+        return [float(data[i]) for i in range(n)]
+
+    def teardown(self) -> None:
+        """Return ngspice to a clean slate.
+
+        'destroy all' frees every plot and resets the plot name counter to 1.
+        'remcirc' removes ONE circuit, so it has to be repeated: 'source' and
+        ngSpice_Circ both stack, and leaving 300 circuits loaded costs 5x
+        throughput and leaks about 59 kB per simulation.
+        """
+        self.command("destroy all")
+        for _ in range(256):
+            self.clear_console()
+            self.command("remcirc")
+            text = " ".join(self.console_lines()).lower()
+            if "no circuit loaded" in text or "aren't any circuits loaded" in text:
+                break
+        self.clear_console()
+
+
+# ---------------------------------------------------------------------------
+# Run bookkeeping
+# ---------------------------------------------------------------------------
+
+@dataclass
+class _SimRun:
+    """Everything one ngspice load-and-run produced."""
+
+    plots: dict[str, dict[str, list]] = field(default_factory=dict)
+    plot_order: list[str] = field(default_factory=list)
+    console: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    netlist: str = ""
+
+    def find_plot(self, *prefixes: str) -> Optional[str]:
+        """First new plot whose name starts with one of the given prefixes."""
+        for name in self.plot_order:
+            low = name.lower()
+            for pre in prefixes:
+                if low.startswith(pre):
+                    return name
+        return None
+
+    def vectors(self, plot: Optional[str]) -> dict[str, list]:
+        if not plot:
+            return {}
+        return self.plots.get(plot, {})
+
+
+def _real(values: Sequence) -> list[float]:
+    """Real projection of a vector that may be real or complex."""
+    out: list[float] = []
+    for v in values:
+        if isinstance(v, complex):
+            out.append(float(v.real))
+        else:
+            out.append(float(v))
+    return out
+
+
+def _is_complex(values: Sequence) -> bool:
+    return bool(values) and isinstance(values[0], complex)
+
+
+# ---------------------------------------------------------------------------
+# Netlist helpers
+# ---------------------------------------------------------------------------
+
+_SUPPLY_NODES = ("vdd", "vcc", "vdda", "vddd", "avdd", "dvdd", "vpwr", "vsup")
+_GROUND_NODES = ("0", "gnd", "gnd!", "vss", "vgnd")
+
+
+def netlist_text(source: Any) -> str:
+    """Accept either netlist TEXT or a PATH and return the netlist text.
+
+    The frozen SimulatorInterface declares `netlist: str` (text) and
+    training/rl_env.py passes text, while the scripts and tests in this repo
+    pass a file path. Both are supported. Detection is deliberately
+    conservative: anything multi-line, anything longer than a legal Windows
+    path, and anything that is not an existing file is treated as text.
+    """
+    if isinstance(source, Path):
+        return source.read_text(encoding="utf-8")
+    if not isinstance(source, str):
+        raise TypeError(f"netlist must be str or Path, got {type(source).__name__}")
+    if "\n" in source or "\r" in source or "\x00" in source:
+        return source
+    if len(source) > 260:
+        return source
+    try:
+        candidate = Path(source)
+        if candidate.is_file():
+            return candidate.read_text(encoding="utf-8")
+    except (OSError, ValueError):
+        pass
+    return source
+
+
+def _param(params: Any, name: str, default: Any = None) -> Any:
+    """Read a field from a SimParams, a plain dict, or None."""
+    if params is None:
+        return default
+    if isinstance(params, dict):
+        value = params.get(name, default)
+        return default if value is None else value
+    value = getattr(params, name, default)
+    return default if value is None else value
+
+
+def _options(params: Any) -> dict:
+    opts = _param(params, "options", None)
+    if isinstance(opts, dict):
+        return opts
+    if isinstance(params, dict):
+        # RL passes a flat args dict; treat it as the options bag too.
+        return params
+    return {}
+
+
+def _code_lines(netlist: str) -> list[str]:
+    """Netlist lines with comments and blanks removed, lowercased, stripped."""
+    out = []
+    for raw in netlist.splitlines():
+        s = raw.strip()
+        if not s or s.startswith("*") or s.startswith(";"):
+            continue
+        out.append(s.lower())
+    return out
+
+
+def _has_card(netlist: str, *cards: str) -> bool:
+    for line in _code_lines(netlist):
+        for card in cards:
+            if line.startswith(card):
+                return True
+    return False
+
+
+def _has_control_run(netlist: str) -> bool:
+    """True when the deck carries a .control block that runs the sim itself."""
+    inside = False
+    for line in _code_lines(netlist):
+        if line.startswith(".control"):
+            inside = True
+            continue
+        if line.startswith(".endc"):
+            inside = False
+            continue
+        if inside and (line == "run" or line.startswith("run ")):
+            return True
+    return False
+
+
+def _strip_lines(netlist: str, *prefixes: str) -> str:
+    keep = []
+    for raw in netlist.splitlines():
+        low = raw.strip().lower()
+        if any(low.startswith(p) for p in prefixes):
+            continue
+        keep.append(raw)
+    return "\n".join(keep)
+
+
+def _body_without_end(netlist: str) -> list[str]:
+    """Netlist lines with any bare '.end' removed ('.ends'/'.endc' kept)."""
+    keep = []
+    for raw in netlist.splitlines():
+        if raw.strip().lower() == ".end":
+            continue
+        keep.append(raw.rstrip())
+    return keep
+
+
+_VSOURCE_RE = re.compile(
+    r"^(?P<name>[vV][\w.:$#\-]*)\s+(?P<pos>\S+)\s+(?P<neg>\S+)\s*(?P<rest>.*)$"
+)
+_DC_VALUE_RE = re.compile(r"(?i)\b(dc)\b\s*(=?)\s*(?P<val>[-+]?[\d.]+(?:e[-+]?\d+)?\w*)")
+_LEADING_NUM_RE = re.compile(r"^(?P<val>[-+]?[\d.]+(?:e[-+]?\d+)?\w*)")
+
+
+def set_supply_voltage(netlist: str, voltage: float,
+                       source: Optional[str] = None) -> tuple[str, int]:
+    """Rewrite the DC value of the supply voltage source(s).
+
+    When `source` is given only that source is rewritten. Otherwise every
+    independent voltage source from a supply-looking node to ground is
+    rewritten. Returns (netlist, number_of_sources_changed) so the caller can
+    fail loudly instead of silently simulating the wrong supply.
+    """
+    changed = 0
+    out: list[str] = []
+    for raw in netlist.splitlines():
+        stripped = raw.strip()
+        m = _VSOURCE_RE.match(stripped)
+        if not m or stripped.startswith("*"):
+            out.append(raw)
+            continue
+        name = m.group("name")
+        pos = m.group("pos").lower()
+        neg = m.group("neg").lower()
+        rest = m.group("rest")
+        if source is not None:
+            if name.lower() != source.lower():
+                out.append(raw)
+                continue
+        else:
+            if pos not in _SUPPLY_NODES or neg not in _GROUND_NODES:
+                out.append(raw)
+                continue
+        value = f"{voltage:g}"
+        dc_match = _DC_VALUE_RE.search(rest)
+        if dc_match:
+            new_rest = rest[:dc_match.start("val")] + value + rest[dc_match.end("val"):]
+        else:
+            num_match = _LEADING_NUM_RE.match(rest.strip())
+            if num_match and not rest.strip().lower().startswith(("ac", "pulse", "sin", "pwl", "exp")):
+                tail = rest.strip()[num_match.end("val"):]
+                new_rest = f"DC {value}{tail}"
+            else:
+                new_rest = f"DC {value} {rest}".strip()
+        out.append(f"{name} {m.group('pos')} {m.group('neg')} {new_rest}".rstrip())
+        changed += 1
+    return "\n".join(out), changed
+
+
+# ---------------------------------------------------------------------------
+# Adapter
+# ---------------------------------------------------------------------------
+
+class NgspiceSharedAdapter(SimulatorAdapter):
+    """ngspice adapter using the shared library (DLL) via ctypes.
+
+    Every analysis method accepts either netlist TEXT or a PATH as its first
+    argument, and `params` may be a SimParams, a plain dict of arguments (what
+    training/rl_env.py passes), or None.
+
+    AC signal naming scheme (kept consistent everywhere in this class):
+      ACResult.signals["vdb(<vector>)"] -- magnitude in dB, x = frequency [Hz]
+      ACResult.signals["vp(<vector>)"]  -- phase in degrees, x = frequency [Hz]
+    The names follow ngspice's own vdb()/vp() post-processing functions, so
+    "vdb(out)" is the dB magnitude of node 'out' and "vp(v1#branch)" is the
+    phase of the current through V1.
+    """
+
+    def __init__(self, config: AdapterConfig, pdk: Optional[str] = None,
+                 corner: str = "tt"):
+        super().__init__(config)
+        self._output: list[str] = []
+
+        dll_path = config.binary_path
+        if not dll_path or not Path(dll_path).exists():
+            dll_path = find_ngspice_dll()
+        if not dll_path:
+            raise FileNotFoundError(
+                "ngspice.dll not found. Install KiCad, set binary_path, or set "
+                "ASIC_AI_NGSPICE_DLL."
+            )
+
+        self._ng = _NgspiceLibrary.instance(dll_path)
+        self._lib = self._ng.dll
+        self.dll_path = dll_path
+        self.pdk = pdk or os.environ.get("ASIC_AI_PDK") or None
+        self.corner = corner
+        self.last_warnings: list[str] = []
+        if self.pdk and not pdk_deck.pdk_available(self.pdk):
+            log.warning("PDK '%s' requested but its model deck was not found; "
+                        "netlists will be simulated without it", self.pdk)
+        log.info("ngspice shared library loaded: %s (pdk=%s)", dll_path, self.pdk)
+
+    # -- PDK -------------------------------------------------------------
+
+    def pdk_ready(self, pdk: Optional[str] = None) -> bool:
+        """True when a PDK model deck is configured AND present on this machine."""
+        target = pdk or self.pdk
+        return bool(target) and pdk_deck.pdk_available(target)
+
+    def _pdk_selection(self, params: Any) -> tuple[Optional[str], str]:
+        opts = _options(params)
+        pdk = opts.get("pdk", self.pdk)
+        corner = opts.get("corner", self.corner) or "tt"
+        if pdk and not pdk_deck.pdk_available(pdk):
+            return None, corner
+        return pdk, corner
+
+    # -- netlist assembly -------------------------------------------------
+
+    def _analysis_card(self, kind: str, params: Any, netlist: str) -> Optional[str]:
+        """Synthesise the analysis directive when the deck does not carry one."""
+        opts = _options(params)
+        start = _param(params, "start")
+        stop = _param(params, "stop")
+        step = _param(params, "step")
+        points = _param(params, "points")
+        sweep = _param(params, "sweep_var")
+
+        if kind == "dc":
+            if sweep and start is not None and stop is not None and step:
+                return f".dc {sweep} {start:g} {stop:g} {step:g}"
+            return ".op"
+        if kind == "ac":
+            if start is None or stop is None:
+                raise NgspiceError(
+                    "ac(): the netlist has no .ac card and params do not supply "
+                    "start/stop frequency. Refusing to invent a sweep."
+                )
+            variant = str(opts.get("ac_variant", "dec"))
+            n = int(points or 10)
+            return f".ac {variant} {n} {start:g} {stop:g}"
+        if kind == "tran":
+            if stop is None:
+                raise NgspiceError(
+                    "tran(): the netlist has no .tran card and params do not "
+                    "supply a stop time. Refusing to invent a sweep."
+                )
+            tstep = step or (float(stop) / 1000.0)
+            return f".tran {tstep:g} {float(stop):g}"
+        if kind == "noise":
+            out_node = opts.get("output") or opts.get("out")
+            src = opts.get("source") or opts.get("input_source")
+            if not out_node or not src or start is None or stop is None:
+                raise NgspiceError(
+                    "noise(): the netlist has no .noise card and params do not "
+                    "supply output/source/start/stop. Refusing to invent one."
+                )
+            n = int(points or 100)
+            return f".noise v({out_node}) {src} dec {n} {start:g} {stop:g}"
+        return None
+
+    def _build_netlist(self, source: Any, kind: str, params: Any = None,
+                       pdk: Optional[str] = None, corner: str = "tt",
+                       temperature: Optional[float] = None,
+                       supply: Optional[float] = None,
+                       mc: bool = False, seed: Optional[int] = None) -> str:
+        body = netlist_text(source)
+
+        if supply is not None:
+            src_name = _options(params).get("supply_source")
+            body, n_changed = set_supply_voltage(body, supply, src_name)
+            if n_changed == 0:
+                raise NgspiceError(
+                    f"cannot apply supply voltage {supply} V: no independent "
+                    "voltage source from a supply node to ground was found. "
+                    "Name it explicitly via options['supply_source']."
+                )
+
+        prelude: list[str] = []
+        if pdk:
+            if not mc:
+                body = pdk_deck.apply_instance_params(body, pdk)
+            prelude = pdk_deck.lib_lines(pdk, corner=corner, mc=mc)
+
+        directives: list[str] = []
+        if temperature is not None:
+            body = _strip_lines(body, ".temp", ".option temp")
+            directives.append(f".temp {temperature:g}")
+        if seed is not None:
+            body = _strip_lines(body, ".option seed")
+            directives.append(f".option seed={int(seed)}")
+
+        cards = {
+            "dc": (".dc", ".op"),
+            "ac": (".ac",),
+            "tran": (".tran",),
+            "noise": (".noise",),
+        }.get(kind, ())
+        if cards and not _has_card(body, *cards):
+            card = self._analysis_card(kind, params, body)
+            if card:
+                directives.append(card)
+
+        # A title comment is prepended unconditionally so that SPICE cannot
+        # swallow the caller's first device line. See module docstring, item 2.
+        lines = [NETLIST_TITLE]
+        lines.extend(prelude)
+        lines.extend(_body_without_end(body))
+        lines.extend(directives)
+        lines.append(".end")
+        return "\n".join(lines)
+
+    # -- execution --------------------------------------------------------
+
+    def _execute(self, netlist: str, pdk: Optional[str]) -> _SimRun:
+        ng = self._ng
+        ng.teardown()
+
+        behavior = pdk_deck.ngbehavior(pdk) if pdk else ""
+        if behavior:
+            ng.command(f"set ngbehavior={behavior}")
+        else:
+            ng.command("unset ngbehavior")
+
+        before = set(ng.all_plots())
+        ng.clear_console()
+
+        lines = netlist.splitlines()
+        ng.load_circuit(lines)
+        if not _has_control_run(netlist):
+            ng.command("run")
+
+        console = ng.console_lines()
+        self._output = list(console)
+
+        lowered = [c.lower() for c in console]
+        fatal = [c for c, low in zip(console, lowered)
+                 if any(m in low for m in _FATAL_MARKERS)]
+        warns = [c for c, low in zip(console, lowered)
+                 if any(m in low for m in _WARN_MARKERS)]
+
+        cur = ng.cur_plot()
+        after = ng.all_plots()
+        new_plots = [p for p in after if p not in before and p != "const"]
+
+        if fatal or not new_plots or cur in (None, "", "const"):
+            raise NgspiceError(self._failure_message(fatal, cur, new_plots, pdk))
+
+        run = _SimRun(plot_order=list(new_plots), console=console,
+                      warnings=warns, netlist=netlist)
+        for plot in new_plots:
+            vecs: dict[str, list] = {}
+            for name in ng.all_vecs(plot):
+                data = ng.vector(f"{plot}.{name}")
+                if data is None:
+                    continue
+                vecs[name] = data
+            run.plots[plot] = vecs
+
+        if warns:
+            log.warning("ngspice reported %d convergence warning(s); first: %s",
+                        len(warns), warns[0])
+        self.last_warnings = warns
+        return run
+
+    def _failure_message(self, fatal: list[str], cur: Optional[str],
+                         new_plots: list[str], pdk: Optional[str]) -> str:
+        """Build a failure message, redacting deck text when a PDK is loaded.
+
+        ngspice quotes offending deck expressions verbatim in its diagnostics.
+        With an NDA foundry deck loaded those lines are model data, so only the
+        marker category is reported, never the raw text.
+        """
+        if pdk and pdk_deck.pdk_available(pdk):
+            categories = sorted({
+                m for line in fatal for m in _FATAL_MARKERS if m in line.lower()
+            })
+            lines = sorted({m.group(1) for line in fatal
+                            for m in [_ERROR_LINE_RE.search(line)] if m})
+            detail = ", ".join(categories) if categories else "no new plot produced"
+            where = f" at netlist line(s) {', '.join(lines)}" if lines else ""
+            return (
+                f"ngspice simulation failed with PDK '{pdk}' [{detail}]{where}. "
+                "Diagnostic text is withheld because it can quote proprietary "
+                "model deck content; re-run without the PDK to see it. Common "
+                "causes: a device geometry outside the model bins (an IO device "
+                "at a core gate length), or a device name that is not a "
+                "subcircuit wrapper."
+            )
+        if fatal:
+            return "ngspice simulation failed: " + " | ".join(fatal[:5])
+        return (
+            f"ngspice produced no new plot (cur_plot={cur!r}, new={new_plots}). "
+            "The netlist most likely failed to parse or declared no analysis."
         )
-        tmp.write(netlist)
-        tmp.close()
-        try:
-            self._cmd(f"source {tmp.name}")
-            self._cmd("run")
-            return self._output.copy()
-        finally:
-            try:
-                os.unlink(tmp.name)
-            except OSError:
-                pass
 
-    def _data_rows(self, output: list[str]) -> int:
-        for line in output:
-            m = re.search(r"No\. of Data Rows\s*:\s*(\d+)", line)
-            if m:
-                return int(m.group(1))
-        return 0
+    def _run(self, source: Any, kind: str, params: Any = None,
+             temperature: Optional[float] = None, supply: Optional[float] = None,
+             mc: bool = False, seed: Optional[int] = None,
+             corner_override: Optional[str] = None) -> _SimRun:
+        pdk, corner = self._pdk_selection(params)
+        if corner_override:
+            corner = corner_override
+        netlist = self._build_netlist(
+            source, kind, params, pdk=pdk, corner=corner,
+            temperature=temperature, supply=supply, mc=mc, seed=seed,
+        )
+        return self._execute(netlist, pdk)
 
-    # ---- SimulatorInterface methods ----
+    # -- result builders ---------------------------------------------------
 
-    def dc(self, circuit_path: str, params: SimParams) -> DCResult:
-        with open(circuit_path, "r", encoding="utf-8") as f:
-            netlist = f.read()
-        output = self._simulate(netlist)
-        rows = self._data_rows(output)
-        sig = SignalData(name="sweep", x_values=list(range(rows)), y_values=[0.0] * rows)
-        return DCResult(op_points={}, sweeps={"sweep": sig})
+    @staticmethod
+    def _build_dc(run: _SimRun) -> Optional[DCResult]:
+        op_plot = run.find_plot("op")
+        dc_plot = run.find_plot("dc")
+        if not op_plot and not dc_plot:
+            return None
 
-    def ac(self, circuit_path: str, params: SimParams) -> ACResult:
-        with open(circuit_path, "r", encoding="utf-8") as f:
-            netlist = f.read()
-        output = self._simulate(netlist)
-        rows = self._data_rows(output)
-        sig = SignalData(name="mag", x_values=list(range(rows)), y_values=[0.0] * rows)
-        return ACResult(frequencies=list(range(rows)), signals={"mag": sig})
+        op_points: dict[str, float] = {}
+        for name, data in run.vectors(op_plot).items():
+            if len(data) == 1:
+                op_points[name] = _real(data)[0]
 
-    def tran(self, circuit_path: str, params: SimParams) -> TranResult:
-        with open(circuit_path, "r", encoding="utf-8") as f:
-            netlist = f.read()
-        output = self._simulate(netlist)
-        rows = self._data_rows(output)
-        sig = SignalData(name="out", x_values=list(range(rows)), y_values=[0.0] * rows)
-        return TranResult(time=list(range(rows)), signals={"out": sig})
+        sweeps: dict[str, SignalData] = {}
+        vecs = run.vectors(dc_plot)
+        if vecs:
+            if "v-sweep" in vecs:
+                x_name = "v-sweep"
+            else:
+                # Fall back to the longest vector so the axis is at least real
+                # data rather than an invented index range.
+                x_name = max(vecs, key=lambda k: len(vecs[k]))
+            x_values = _real(vecs[x_name])
+            for name, data in vecs.items():
+                if name == x_name or len(data) != len(x_values):
+                    continue
+                y_values = _real(data)
+                if y_values == x_values:
+                    continue  # exact duplicate of the swept variable
+                sweeps[name] = SignalData(name=name, x_values=list(x_values),
+                                          y_values=y_values)
+        if not op_points and not sweeps:
+            return None
+        return DCResult(op_points=op_points, sweeps=sweeps)
 
-    def noise(self, circuit_path: str, params: SimParams) -> NoiseResult:
-        with open(circuit_path, "r", encoding="utf-8") as f:
-            netlist = f.read()
-        self._simulate(netlist)
-        return NoiseResult(frequencies=[], input_noise=[], output_noise=[])
+    @staticmethod
+    def _ac_frequencies(vecs: dict[str, list]) -> list[float]:
+        raw = vecs.get("frequency")
+        if raw is None:
+            raise NgspiceError("AC plot has no 'frequency' vector")
+        # The AC frequency axis is COMPLEX with a zero imaginary part, while
+        # the noise frequency axis is REAL. Both must work here.
+        return _real(raw)
 
-    def stb(self, circuit_path: str, params: SimParams) -> StabilityResult:
-        with open(circuit_path, "r", encoding="utf-8") as f:
-            netlist = f.read()
-        self._simulate(netlist)
-        return StabilityResult(phase_margin=0.0, gain_margin=0.0, loop_gain={})
+    @classmethod
+    def _build_ac(cls, run: _SimRun, params: Any = None) -> Optional[ACResult]:
+        plot = run.find_plot("ac")
+        vecs = run.vectors(plot)
+        if not vecs:
+            return None
+        freqs = cls._ac_frequencies(vecs)
 
-    def corners(self, circuit_path: str, pvt_list: list[PVTCorner]) -> list[CornerResult]:
-        results = []
-        with open(circuit_path, "r", encoding="utf-8") as f:
-            base_netlist = f.read()
-        for pvt in pvt_list:
-            netlist = base_netlist
-            if ".temp" not in netlist.lower():
-                netlist = netlist.replace(".end", f".temp {pvt.temperature}\n.end")
-            output = self._simulate(netlist)
-            rows = self._data_rows(output)
-            sig = SignalData(name="sweep", x_values=list(range(rows)), y_values=[0.0] * rows)
+        divisor = None
+        ref = _options(params).get("input_signal")
+        if ref and ref in vecs:
+            divisor = vecs[ref]
+
+        signals: dict[str, SignalData] = {}
+        for name, data in vecs.items():
+            if name == "frequency" or len(data) != len(freqs):
+                continue
+            values = [complex(v) if not isinstance(v, complex) else v for v in data]
+            gain_db, phase_deg = measure.transfer_function(values, divisor)
+            key_m = f"vdb({name})"
+            key_p = f"vp({name})"
+            signals[key_m] = SignalData(name=key_m, x_values=list(freqs),
+                                        y_values=gain_db)
+            signals[key_p] = SignalData(name=key_p, x_values=list(freqs),
+                                        y_values=phase_deg)
+        return ACResult(frequencies=freqs, signals=signals)
+
+    @staticmethod
+    def _build_tran(run: _SimRun) -> Optional[TranResult]:
+        plot = run.find_plot("tran")
+        vecs = run.vectors(plot)
+        if not vecs:
+            return None
+        if "time" not in vecs:
+            raise NgspiceError("transient plot has no 'time' vector")
+        t = _real(vecs["time"])
+        signals: dict[str, SignalData] = {}
+        for name, data in vecs.items():
+            if name == "time" or len(data) != len(t):
+                continue
+            signals[name] = SignalData(name=name, x_values=list(t),
+                                       y_values=_real(data))
+        return TranResult(time=t, signals=signals)
+
+    @staticmethod
+    def _noise_plots(run: _SimRun) -> tuple[Optional[str], Optional[str]]:
+        """Identify the spectrum plot and the totals plot by their vectors.
+
+        ngSpice_CurPlot() returns the TOTALS plot for a .noise run, so it must
+        not be used to find the spectrum.
+        """
+        spectrum = totals = None
+        for name in run.plot_order:
+            names = set(run.plots.get(name, {}))
+            if any(v.endswith("_spectrum") for v in names):
+                spectrum = spectrum or name
+            elif any(v.endswith("_total") for v in names):
+                totals = totals or name
+        return spectrum, totals
+
+    # -- SimulatorInterface methods ---------------------------------------
+
+    def dc(self, netlist: str, params: Any = None) -> DCResult:
+        """DC operating point and/or DC sweep.
+
+        `.op` fills op_points from the length-1 vectors. `.dc` fills sweeps,
+        using the real swept variable ('v-sweep') as x_values. When the deck
+        carries both, both are populated from a single load.
+        """
+        run = self._run(netlist, "dc", params)
+        result = self._build_dc(run)
+        if result is None:
+            raise NgspiceError(
+                f"dc(): run produced no operating point or sweep data "
+                f"(plots: {run.plot_order})"
+            )
+        return result
+
+    def ac(self, netlist: str, params: Any = None) -> ACResult:
+        """Small-signal AC analysis. See the class docstring for signal naming."""
+        run = self._run(netlist, "ac", params)
+        result = self._build_ac(run, params)
+        if result is None:
+            raise NgspiceError(f"ac(): run produced no AC plot (plots: {run.plot_order})")
+        return result
+
+    def tran(self, netlist: str, params: Any = None) -> TranResult:
+        """Transient analysis. x_values of every signal is the real time vector."""
+        run = self._run(netlist, "tran", params)
+        result = self._build_tran(run)
+        if result is None:
+            raise NgspiceError(
+                f"tran(): run produced no transient plot (plots: {run.plot_order})"
+            )
+        return result
+
+    def noise(self, netlist: str, params: Any = None) -> NoiseResult:
+        """Noise analysis.
+
+        Returns the SPECTRAL DENSITY curves (V/sqrt(Hz)), which live in the
+        first noise plot. ngspice's own integrated inoise_total/onoise_total
+        are grid dependent and read about 12 pct high at 'dec 10', so they are
+        deliberately not returned; use measure.integrate_noise() on the
+        returned spectra instead, with >= 100 points/decade.
+        """
+        run = self._run(netlist, "noise", params)
+        spectrum_plot, _totals = self._noise_plots(run)
+        vecs = run.vectors(spectrum_plot)
+        if not vecs or "frequency" not in vecs:
+            raise NgspiceError(
+                f"noise(): no noise spectrum plot found (plots: {run.plot_order})"
+            )
+        freqs = _real(vecs["frequency"])
+        inoise = vecs.get("inoise_spectrum")
+        onoise = vecs.get("onoise_spectrum")
+        if inoise is None or onoise is None:
+            raise NgspiceError("noise(): spectrum plot lacks inoise/onoise vectors")
+        return NoiseResult(
+            frequencies=freqs,
+            input_noise=SignalData(name="inoise_spectrum", x_values=list(freqs),
+                                   y_values=_real(inoise)),
+            output_noise=SignalData(name="onoise_spectrum", x_values=list(freqs),
+                                    y_values=_real(onoise)),
+        )
+
+    def stb(self, netlist: str, params: Any = None) -> StabilityResult:
+        """Loop stability from a broken-loop AC response.
+
+        ngspice has no native .stb analysis, so this is the classical
+        broken-loop method: the deck must already break the loop and drive it
+        with an AC source. The loop response is out/in, taken from
+        options['loop_out'] (default 'out') divided by options['loop_in']
+        (default 'in' when that vector exists). Phase is unwrapped and its DC
+        value normalised to ~0 deg so an inverting loop does not report a phase
+        margin that is 180 deg wrong.
+
+        Raises when the loop gain never crosses 0 dB, because the phase margin
+        is then undefined and returning 0.0 would be a fabrication. When the
+        phase never reaches -180 deg the gain margin is infinite and is
+        reported as float('inf').
+        """
+        opts = _options(params)
+        out_name = str(opts.get("loop_out", "out"))
+        in_name = opts.get("loop_in", "in")
+
+        run = self._run(netlist, "ac", params)
+        plot = run.find_plot("ac")
+        vecs = run.vectors(plot)
+        if not vecs:
+            raise NgspiceError(f"stb(): no AC plot produced (plots: {run.plot_order})")
+        freqs = self._ac_frequencies(vecs)
+        if out_name not in vecs:
+            raise NgspiceError(
+                f"stb(): loop output vector '{out_name}' not in AC plot "
+                f"{sorted(vecs)}. Set options['loop_out']."
+            )
+        num = [complex(v) for v in vecs[out_name]]
+        den = None
+        if in_name and in_name in vecs:
+            den = [complex(v) for v in vecs[in_name]]
+        gain_db, phase_deg = measure.transfer_function(num, den)
+        m = measure.ac_metrics(freqs, gain_db, phase_deg)
+
+        if m["phase_margin"] is None:
+            raise NgspiceError(
+                "stb(): loop gain never crosses 0 dB, so the phase margin is "
+                f"undefined (max gain {max(gain_db):.2f} dB)."
+            )
+        gm = m["gain_margin"]
+        return StabilityResult(
+            phase_margin=float(m["phase_margin"]),
+            gain_margin=float(gm) if gm is not None else float("inf"),
+            loop_gain=SignalData(name="loop_gain_db", x_values=list(freqs),
+                                 y_values=gain_db),
+        )
+
+    def corners(self, netlist: str, pvt_list: Sequence[Any]) -> list[CornerResult]:
+        """Run a real simulation per PVT corner.
+
+        Each corner varies:
+          - TEMPERATURE via a '.temp' directive (always),
+          - SUPPLY via a rewrite of the supply source's DC value (when the
+            corner declares a non-zero voltage),
+          - PROCESS via the PDK model deck's corner section (ONLY when a PDK
+            deck is configured and present; without one ngspice has no process
+            corner to switch to and this is logged as a warning rather than
+            silently pretended).
+
+        Accepts PVTCorner objects or plain corner-name strings ('tt', 'ss',
+        ...), because training/rl_env.py passes strings. A bare NAME carries no
+        supply information, so only its process and temperature are applied;
+        pass a PVTCorner to also vary the supply. Whichever analyses the deck
+        declares (.op/.dc, .ac, .tran) are harvested from one load per corner.
+        """
+        pdk, _ = self._pdk_selection(None)
+        if not pdk:
+            log.warning("corners(): no PDK model deck configured; process corner "
+                        "is NOT varied, only temperature and supply")
+
+        results: list[CornerResult] = []
+        for entry in pvt_list:
+            corner = self._as_pvt(entry, pdk)
+            supply = corner.voltage if corner.voltage and corner.voltage > 0 else None
+            run = self._run(
+                netlist, "dc", None,
+                temperature=corner.temperature, supply=supply,
+                corner_override=corner.process.lower() if pdk else None,
+            )
             results.append(CornerResult(
-                corner=pvt, dc=DCResult(op_points={}, sweeps={"sweep": sig}),
+                corner=corner,
+                dc=self._build_dc(run),
+                ac=self._build_ac(run),
+                tran=self._build_tran(run),
             ))
         return results
 
-    def mc(self, circuit_path: str, n: int, seed: int) -> MonteCarloResult:
-        return MonteCarloResult(seed=seed, runs=n, results=[])
+    def _as_pvt(self, entry: Any, pdk: Optional[str]) -> PVTCorner:
+        if isinstance(entry, PVTCorner):
+            return entry
+        if isinstance(entry, dict):
+            return PVTCorner(**entry)
+        name = str(entry).lower()
+        # A bare corner name carries no voltage. 0.0 means "not specified" and
+        # suppresses the supply rewrite rather than forcing a 0 V supply.
+        temperature = 27.0
+        if pdk:
+            temperature = float(
+                pdk_deck.corner_pvt(pdk, name).get("temperature", temperature)
+            )
+        else:
+            temperature = _GENERIC_CORNER_TEMPS.get(name, temperature)
+        return PVTCorner(process=name, voltage=0.0, temperature=temperature)
+
+    def mc(self, netlist: str, n: Any = 10, seed: int = 0,
+           params: Any = None) -> MonteCarloResult:
+        """Monte Carlo by running n real, individually seeded simulations.
+
+        HOW THE RANDOMNESS IS SOURCED, and its limits:
+          - With a PDK whose config declares statistical sections (TSMC65
+            declares 'stat' then 'MC'), those sections are included instead of
+            the process corner, the caller-side unit-normal mismatch draws are
+            declared, and each run gets '.option seed=<seed+i>'. That yields
+            global process plus local mismatch variation and is bit-for-bit
+            reproducible for a given seed.
+          - Without a PDK, the netlist itself must contain a distribution
+            function (agauss/gauss/unif/aunif). ngspice re-evaluates those at
+            every netlist parse, so seeding per run gives genuine variation.
+          - With neither, there is NOTHING to vary. This method then RAISES
+            rather than returning n identical runs dressed up as Monte Carlo.
+            'set rndseed' does not reach the parse-time RNG and is not used.
+
+        The per-run metrics are generic (operating point node values, and
+        min/max/last of each swept or transient signal). Domain metrics such as
+        gain or bandwidth should be computed by the caller from `results`.
+
+        `n` also accepts the raw args dict that training/rl_env.py passes, in
+        which case n/seed are read out of it.
+        """
+        if isinstance(n, dict):
+            args = n
+            params = params or args
+            seed = int(args.get("seed", seed) or 0)
+            n = int(args.get("n", args.get("runs", args.get("iterations", 10))))
+        n = int(n)
+        seed = int(seed or 0)
+
+        pdk, corner = self._pdk_selection(params)
+        body = netlist_text(netlist)
+        pdk_mc = bool(pdk) and bool(
+            (pdk_deck.get_pdk_config(pdk) or {}).get("mc_sections")
+        )
+        netlist_random = bool(
+            re.search(r"\b(a?gauss|a?unif)\s*\(", body, re.IGNORECASE)
+        )
+        if not pdk_mc and not netlist_random:
+            raise NgspiceError(
+                "mc(): no source of statistical variation. Configure a PDK with "
+                "statistical model sections, or write distribution functions "
+                "(agauss/gauss/unif) into the netlist. Refusing to return "
+                f"{n} identical runs as Monte Carlo."
+            )
+
+        results: list[dict[str, Any]] = []
+        for i in range(n):
+            run_seed = seed + i
+            run = self._run(body, "dc", params, mc=pdk_mc, seed=run_seed,
+                            corner_override=corner)
+            metrics = self._summarize_run(run)
+            metrics["run"] = i
+            metrics["seed"] = run_seed
+            results.append(metrics)
+        return MonteCarloResult(seed=seed, runs=n, results=results)
+
+    @staticmethod
+    def _summarize_run(run: _SimRun) -> dict[str, Any]:
+        """Generic per-run scalar summary used by mc()."""
+        metrics: dict[str, Any] = {}
+        op_plot = run.find_plot("op")
+        for name, data in run.vectors(op_plot).items():
+            if len(data) == 1:
+                metrics[f"op.{name}"] = _real(data)[0]
+        for prefix in ("dc", "tran"):
+            plot = run.find_plot(prefix)
+            vecs = run.vectors(plot)
+            axis = "v-sweep" if "v-sweep" in vecs else "time"
+            for name, data in vecs.items():
+                if name == axis or not data:
+                    continue
+                y = _real(data)
+                metrics[f"{name}.min"] = min(y)
+                metrics[f"{name}.max"] = max(y)
+                metrics[f"{name}.last"] = y[-1]
+        return metrics
+
+    # -- measurement convenience ------------------------------------------
+
+    @staticmethod
+    def measure_ac(result: ACResult, signal: str = "out") -> dict[str, Optional[float]]:
+        """dc_gain_db / bandwidth_3db / ugb / phase_margin / gain_margin.
+
+        `signal` is a raw vector name such as 'out'; the vdb()/vp() keys are
+        looked up for you.
+        """
+        mag = result.signals.get(f"vdb({signal})")
+        if mag is None:
+            raise KeyError(
+                f"no magnitude signal 'vdb({signal})' in ACResult "
+                f"(have {sorted(result.signals)})"
+            )
+        ph = result.signals.get(f"vp({signal})")
+        return measure.ac_metrics(result.frequencies, mag.y_values,
+                                  ph.y_values if ph else None)
+
+    @staticmethod
+    def measure_tran(result: TranResult, signal: str = "out") -> dict[str, Optional[float]]:
+        """rise_time / fall_time / overshoot / settling_time / slew_rate."""
+        sig = result.signals.get(signal)
+        if sig is None:
+            raise KeyError(
+                f"no signal '{signal}' in TranResult (have {sorted(result.signals)})"
+            )
+        return measure.tran_metrics(result.time, sig.y_values)
+
+    @staticmethod
+    def measure_idd(result: DCResult,
+                    sources: Optional[Iterable[str]] = None) -> Optional[float]:
+        """Total supply current magnitude in amperes, or None when unavailable.
+
+        ngspice reports a source branch current with the passive sign
+        convention, so a 1.8 V supply feeding 20 kOhm reports -90 uA. This
+        returns the magnitude, 90e-6.
+        """
+        return measure.supply_current(
+            result.op_points, list(sources) if sources else None
+        )

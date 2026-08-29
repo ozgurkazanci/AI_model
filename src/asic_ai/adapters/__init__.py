@@ -5,14 +5,21 @@ from asic_ai.adapters.opensta import OpenSTAAdapter
 from asic_ai.adapters.nabla import NablaAdapter
 
 def get_adapter(backend: str = 'ngspice', **kwargs) -> SimulatorAdapter:
-    """Factory function for creating simulator adapters."""
+    """Factory function for creating simulator adapters.
+
+    `pdk` and `corner` are accepted for the ngspice_shared backend and select a
+    foundry model deck resolved from configuration (see adapters/pdk_deck.py).
+    They are ignored by the other backends.
+    """
+    pdk = kwargs.pop('pdk', None)
+    corner = kwargs.pop('corner', 'tt')
     config = AdapterConfig(**kwargs)
-    
+
     if backend == 'ngspice':
         return NgspiceAdapter(config)
     elif backend == 'ngspice_shared':
         from asic_ai.adapters.ngspice_shared import NgspiceSharedAdapter
-        return NgspiceSharedAdapter(config)
+        return NgspiceSharedAdapter(config, pdk=pdk, corner=corner)
     elif backend == 'mock':
         from asic_ai.adapters.mock import MockSimulatorAdapter
         return MockSimulatorAdapter(config)

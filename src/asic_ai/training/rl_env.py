@@ -14,6 +14,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from asic_ai.adapters import spec_extract
+
 logger = logging.getLogger(__name__)
 
 
@@ -25,6 +27,15 @@ class DesignState:
     netlist: str = ""
     step: int = 0
     sim_results: dict[str, Any] = field(default_factory=dict)
+    analyses: dict[str, Any] = field(default_factory=dict)
+    """Typed adapter results per analysis ('dc', 'ac', 'tran', 'noise', 'stb').
+
+    sim_results is the flat model_dump() merge, keyed by SCHEMA FIELD names, and
+    is kept for the observation text. The reward must never be scored off it:
+    RewardFunction looks up SPEC names, so a schema-keyed dict scores every spec
+    at -1.0. spec_extract.extract_specs() converts these typed results into
+    spec-name-keyed scalars in the units the task declares.
+    """
     history: list[dict[str, Any]] = field(default_factory=list)
     done: bool = False
     success: bool = False
@@ -230,6 +241,9 @@ class CircuitDesignEnv:
             # Mock adapter returns Pydantic models, convert to dict
             result = method(netlist, args)
             if hasattr(result, "model_dump"):
+                # Keep the typed result: spec_extract needs the structure, not
+                # the flattened dump, to derive spec-name-keyed scalars.
+                self.state.analyses[sim_type] = result
                 return result.model_dump()
             return result if isinstance(result, dict) else {"result": str(result)}
 
@@ -247,24 +261,93 @@ class CircuitDesignEnv:
         return {"corners": []}
 
     def _run_spec_check(self, args: dict) -> dict:
-        """Check specs and update success state."""
-        results = args.get("results", self.state.sim_results)
+        """Measure the task's specs from the stored analyses, then score them.
+
+        The measured values are keyed by SPEC name and expressed in the unit the
+        task declared, which is what RewardFunction expects. Specs that cannot
+        be derived from the analyses that were actually run are reported in
+        `unmeasurable` rather than dropped: RewardFunction reads a missing spec
+        as -1.0, which is indistinguishable from a design that was measured and
+        failed, and that silently pins the reward to the floor.
+        """
         specs = args.get("specs", self.state.task_specs)
 
-        # Use reward function for scoring
-        if self.reward_fn:
-            try:
-                score = self.reward_fn(specs, {"measurements": results})
-                self.state.success = score >= self.early_stop_threshold
-                return {
-                    "score": score,
-                    "passed": self.state.success,
-                    "specs_checked": len(specs),
-                }
-            except Exception:
-                pass
+        explicit = args.get("results")
+        if explicit:
+            # Caller supplied measurements directly; trust them as spec-keyed.
+            measured = dict(explicit)
+            unmeasurable: dict[str, str] = {}
+        else:
+            extraction = spec_extract.extract_specs(
+                specs,
+                dc=self.state.analyses.get("dc"),
+                ac=self.state.analyses.get("ac"),
+                tran=self.state.analyses.get("tran"),
+                noise=self.state.analyses.get("noise"),
+                stb=self.state.analyses.get("stb"),
+            )
+            measured = extraction.values
+            unmeasurable = extraction.unmeasurable
 
-        return {"score": 0.0, "passed": False}
+        if unmeasurable:
+            logger.info(
+                "spec.check: %d/%d specs measurable; not derivable: %s",
+                len(measured), len(specs), sorted(unmeasurable),
+            )
+
+        score = self._score(specs, measured)
+        if score is None:
+            return {
+                "score": 0.0,
+                "passed": False,
+                "error": "no usable reward function",
+                "measured": measured,
+                "unmeasurable": unmeasurable,
+            }
+
+        self.state.success = score >= self.early_stop_threshold
+        return {
+            "score": score,
+            "passed": self.state.success,
+            "specs_checked": len(specs),
+            "specs_measured": len(measured),
+            "measured": measured,
+            "unmeasurable": unmeasurable,
+        }
+
+    def _score(self, specs: dict[str, Any],
+               measured: dict[str, float]) -> float | None:
+        """Score measured values, accepting either reward_fn convention.
+
+        Two incompatible shapes are in use in this repo:
+          - the closure built by rl_grpo.create_reward_fn(), called as
+            reward_fn(task_specs, {"measurements": ...}) -> float
+          - a bare RewardFunction instance, which has NO __call__ and must be
+            driven through .compute(results=...) -> RewardResult
+        Calling the second like the first raises TypeError, which a bare
+        `except Exception: pass` used to swallow, silently scoring 0.0.
+        """
+        if self.reward_fn is None:
+            return None
+
+        compute = getattr(self.reward_fn, "compute", None)
+        if callable(compute):
+            try:
+                return float(compute(results=measured).total_reward)
+            except Exception:
+                logger.exception("RewardFunction.compute failed")
+                return None
+
+        if callable(self.reward_fn):
+            try:
+                return float(self.reward_fn(specs, {"measurements": measured}))
+            except Exception:
+                logger.exception("reward_fn callable failed")
+                return None
+
+        logger.error("reward_fn is neither callable nor a RewardFunction: %r",
+                     type(self.reward_fn).__name__)
+        return None
 
     def _run_pdk_query(self, tool_name: str, args: dict) -> dict:
         """Mock PDK query responses."""

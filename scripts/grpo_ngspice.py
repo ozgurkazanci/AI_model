@@ -183,18 +183,30 @@ def evaluate_circuit(adapter, netlist_str: str, work_dir: str, task: dict) -> di
         sweeps = result.sweeps
         n_pts = sum(len(s.x_values) for s in sweeps.values())
 
-        # Extract gain from DC sweep
+        # Extract gain from DC sweep.
         metrics = {"simulated": True, "points": n_pts}
         if sweeps:
-            first_signal = list(sweeps.values())[0]
-            if len(first_signal.y_values) >= 10:
-                # Estimate gain from slope
-                mid = len(first_signal.y_values) // 2
-                dy = abs(first_signal.y_values[mid+1] - first_signal.y_values[mid-1])
-                dx = abs(first_signal.x_values[mid+1] - first_signal.x_values[mid-1])
-                if dx > 0:
-                    gain_vv = dy / dx
-                    import math
+            # Pick the OUTPUT NODE, not whatever vector ngspice happened to
+            # list first. The first entry is usually a supply branch current,
+            # whose slope is an amperes-per-volt number of order 1e-5, which
+            # then clamps dc_gain to the -40 dB floor for every design in the
+            # group. Identical rewards across a group means zero advantage,
+            # which means zero policy gradient.
+            key = next((k for k in ("out", "vout", "v(out)") if k in sweeps),
+                       None)
+            signal = sweeps[key] if key else list(sweeps.values())[0]
+            if len(signal.y_values) >= 10:
+                # Small-signal gain is the STEEPEST slope of the transfer
+                # curve, not the slope at the midpoint of the sweep: the
+                # midpoint is not necessarily inside the high-gain region.
+                import math
+                gain_vv = 0.0
+                for i in range(1, len(signal.y_values) - 1):
+                    dy = abs(signal.y_values[i + 1] - signal.y_values[i - 1])
+                    dx = abs(signal.x_values[i + 1] - signal.x_values[i - 1])
+                    if dx > 0:
+                        gain_vv = max(gain_vv, dy / dx)
+                if gain_vv > 0:
                     metrics["dc_gain"] = 20 * math.log10(max(gain_vv, 0.01))
 
         return metrics

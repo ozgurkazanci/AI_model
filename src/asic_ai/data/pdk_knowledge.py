@@ -156,7 +156,8 @@ TSMC65_PARAMS = {
     # Spectre model include
     "spectre_model_file": "crn65gplus_2d5_lk_v1d0.scs",
     "spectre_corner_files": {
-        "core": "cor_18.scs",       # 1.0V core (section tt_18, ss_18, ff_18, sf_18, fs_18)
+        "core": "cor_std_mos.scs",  # 1.0V core (sections tt, ss, ff, sf, fs)
+        "io_18": "cor_18.scs",      # 1.8V thick oxide (sections tt_18 ...)
         "io_25": "cor_25.scs",      # 2.5V I/O
         "io_33": "cor_33.scs",      # 3.3V I/O
         "hvt": "cor_hvt.scs",       # High-Vt
@@ -171,9 +172,17 @@ TSMC65_PARAMS = {
         "rfmim": "cor_rfmim.scs",
     },
 
-    # NMOS core 1.0V (nch)
+    # NMOS core 1.0V.
+    # "model" is the internal .model name; "subckt" is what designers actually
+    # instantiate (X instance). The bare .model does resolve in ngspice, but it
+    # bypasses the wrapper's computed ad/as/pd/ps and mismatch, so junction
+    # caps and therefore every AC/transient result would be wrong.
+    # NOTE: the vth0/kp/avt figures below are ENGINEERING APPROXIMATIONS for
+    # analytic sizing, not values read out of the foundry deck. Do not treat
+    # them as PDK data and do not replace them with deck values (NDA).
     "nmos": {
         "model": "nch",
+        "subckt": "nch_mac",
         "vth0": 0.42,  # V (typical, SVT)
         "vth0_range": (0.36, 0.48),  # (ff, ss)
         "kp": 350e-6,  # A/V^2
@@ -184,9 +193,10 @@ TSMC65_PARAMS = {
         "abeta": 0.6,  # %*um
     },
 
-    # PMOS core 1.0V (pch)
+    # PMOS core 1.0V (see the NMOS note above about approximate values).
     "pmos": {
         "model": "pch",
+        "subckt": "pch_mac",
         "vth0": -0.39,  # V (typical, SVT)
         "vth0_range": (-0.45, -0.33),
         "kp": 120e-6,  # A/V^2
@@ -198,14 +208,18 @@ TSMC65_PARAMS = {
     },
 
     # Threshold variants
-    "nmos_hvt": {"model": "nch_hvt", "vth0": 0.55},
-    "nmos_lvt": {"model": "nch_lvt", "vth0": 0.32},
-    "pmos_hvt": {"model": "pch_hvt", "vth0": -0.52},
-    "pmos_lvt": {"model": "pch_lvt", "vth0": -0.30},
+    "nmos_hvt": {"model": "nch_hvt", "subckt": "nch_hvt_mac", "vth0": 0.55},
+    "nmos_lvt": {"model": "nch_lvt", "subckt": "nch_lvt_mac", "vth0": 0.32},
+    "pmos_hvt": {"model": "pch_hvt", "subckt": "pch_hvt_mac", "vth0": -0.52},
+    "pmos_lvt": {"model": "pch_lvt", "subckt": "pch_lvt_mac", "vth0": -0.30},
 
-    # I/O devices
-    "nmos_25": {"model": "nch_25", "vth0": 0.55, "vdd": 2.5},
-    "pmos_25": {"model": "pch_25", "vth0": -0.55, "vdd": 2.5},
+    # I/O devices. These are thick-oxide and BIN OUT at core gate lengths:
+    # nch_18_mac needs L >= ~0.28 um, nch_33_mac / nch_25od33_mac L >= ~0.5 um.
+    # Handing an IO device a 60 nm gate is a hard parse failure.
+    "nmos_25": {"model": "nch_25", "subckt": "nch_25_mac", "vth0": 0.55, "vdd": 2.5,
+                "l_min": 0.28e-6, "w_min": 0.5e-6},
+    "pmos_25": {"model": "pch_25", "subckt": "pch_25_mac", "vth0": -0.55, "vdd": 2.5,
+                "l_min": 0.28e-6, "w_min": 0.5e-6},
 
     # RF devices
     "rf_devices": {
@@ -238,14 +252,33 @@ TSMC65_PARAMS = {
         "mosvar_nw": "xjvar_nw",
     },
 
-    # Corners
+    # Corners.
+    # "section" is the HSPICE .lib section name for the 1.0V CORE devices,
+    # which are the BARE corner names. The *_18 sections are the 1.8V
+    # thick-oxide family, NOT the core: asking for tt_18 at 1.0V with a 60nm
+    # gate is a hard parse failure ("could not find a valid modelname").
     "corners": {
-        "tt": {"process": "typical", "voltage": 1.0, "temperature": 27, "section": "tt_18"},
-        "ss": {"process": "slow", "voltage": 0.9, "temperature": -40, "section": "ss_18"},
-        "ff": {"process": "fast", "voltage": 1.1, "temperature": 125, "section": "ff_18"},
-        "sf": {"process": "slow_n_fast_p", "voltage": 1.0, "temperature": 27, "section": "sf_18"},
-        "fs": {"process": "fast_n_slow_p", "voltage": 1.0, "temperature": 27, "section": "fs_18"},
+        "tt": {"process": "typical", "voltage": 1.0, "temperature": 27, "section": "TT"},
+        "ss": {"process": "slow", "voltage": 0.9, "temperature": -40, "section": "SS"},
+        "ff": {"process": "fast", "voltage": 1.1, "temperature": 125, "section": "FF"},
+        "sf": {"process": "slow_n_fast_p", "voltage": 1.0, "temperature": 27, "section": "SF"},
+        "fs": {"process": "fast_n_slow_p", "voltage": 1.0, "temperature": 27, "section": "FS"},
     },
+
+    # Sections for the thick-oxide families, kept separate so they are not
+    # confused with the core corners above.
+    "corner_sections_io": {
+        "1v8": {"tt": "TT_18", "ss": "SS_18", "ff": "FF_18", "sf": "SF_18", "fs": "FS_18"},
+        "2v5": {"tt": "TT_25", "ss": "SS_25", "ff": "FF_25", "sf": "SF_25", "fs": "FS_25"},
+        "3v3": {"tt": "TT_33", "ss": "SS_33", "ff": "FF_33", "sf": "SF_33", "fs": "FS_33"},
+    },
+    # Statistical sections. "stat" defines the global process parameters that
+    # "MC" consumes, so both are needed and stat must come first.
+    "mc_sections": ["stat", "MC"],
+
+    # ngspice HSPICE-compatibility mode required by this deck. "ps" must NOT
+    # be used: it downgrades ".lib file section" to a plain include.
+    "ngspice_ngbehavior": "hsa",
 
     # Design rules
     "design_rules": {
@@ -301,3 +334,48 @@ def calculate_mismatch_sigma(w: float, l: float, pdk: str = "sky130", device: st
     w_um = w * 1e6
     l_um = l * 1e6
     return avt / math.sqrt(w_um * l_um)  # result in volts
+
+
+# ==========================================
+# Simulator deck plumbing (paths only, no model data)
+# ==========================================
+# The functions below are thin re-exports of asic_ai.adapters.pdk_deck, kept
+# here so that PDK-related lookups have a single obvious entry point. The
+# import is local to avoid a package-level cycle.
+#
+# NDA: these resolve a foundry model deck BY PATH. No parameter value from any
+# proprietary deck is stored in this repository, and none may be added. When
+# the deck is absent every function degrades to None / [] / False so the repo
+# stays fully functional without it.
+
+def get_pdk_lib_lines(pdk_name: str, corner: str = "tt", mc: bool = False) -> list:
+    """Exact .lib/.param lines to prepend to a netlist for a PDK and corner.
+
+    Returns [] when the model deck is not installed on this machine.
+
+    Args:
+        pdk_name: PDK id, e.g. "tsmc65".
+        corner: process corner name, e.g. "tt", "ss", "ff", "sf", "fs".
+        mc: when True, include the statistical sections instead of the corner
+            section, for Monte Carlo.
+    """
+    from asic_ai.adapters.pdk_deck import lib_lines
+    return lib_lines(pdk_name, corner=corner, mc=mc)
+
+
+def get_pdk_corner_section(pdk_name: str, corner: str) -> str | None:
+    """Library section name for a corner, e.g. ("tsmc65", "ss") -> "SS"."""
+    from asic_ai.adapters.pdk_deck import corner_section
+    return corner_section(pdk_name, corner)
+
+
+def is_pdk_deck_available(pdk_name: str) -> bool:
+    """True when this PDK's simulator model deck is installed and reachable."""
+    from asic_ai.adapters.pdk_deck import pdk_available
+    return pdk_available(pdk_name)
+
+
+def describe_pdk_deck(pdk_name: str) -> dict:
+    """Summary of a PDK's deck plumbing. Never includes model parameter values."""
+    from asic_ai.adapters.pdk_deck import describe
+    return describe(pdk_name)
