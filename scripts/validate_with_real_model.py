@@ -103,7 +103,7 @@ def main():
     # Step 2: Format prompt with system prompt + tools
     # =============================================
     print(f"\n[2/8] Formatting prompt...")
-    from asic_ai.data.format import TOOL_DEFINITIONS
+    from asic_ai.data.format import TOOL_DEFINITIONS, build_system_message
 
     # Build chatml prompt
     tool_names = [t["function"]["name"] for t in TOOL_DEFINITIONS]
