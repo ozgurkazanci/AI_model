@@ -30,7 +30,6 @@ from asic_ai.adapters.ngspice_shared import NgspiceSharedAdapter, find_ngspice_d
 from asic_ai.adapters.base import AdapterConfig
 from asic_ai.reward import RewardFunction, SpecTarget
 from asic_ai.training.rl_env import CircuitDesignEnv
-from asic_ai.data.format import SYSTEM_PROMPT
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)

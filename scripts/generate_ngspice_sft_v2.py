@@ -19,7 +19,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from asic_ai.adapters.ngspice_shared import NgspiceSharedAdapter, find_ngspice_dll
 from asic_ai.adapters.base import AdapterConfig
 from asic_ai.tool_interface.schema import SimParams
-from asic_ai.data.format import SYSTEM_PROMPT
 
 SEP = "=" * 60
 
@@ -308,7 +307,7 @@ def main():
             if pts > 0:
                 example = {
                     "messages": [
-                        {"role": "system", "content": SYSTEM_PROMPT},
+                        {"role": "system", "content": build_system_message()},
                         {"role": "user", "content": cir["task"]},
                         {"role": "assistant", "content": f"{cir['reasoning']}\n\n<tool_call>\n{{\"name\": \"{cir['tool_name']}\", \"arguments\": {{\"analysis_type\": \"{cir['analysis']}\"}}}}\n</tool_call>"},
                         {"role": "tool", "content": json.dumps({"status": "success", "data_points": pts, "sim_time_ms": round(sim_time * 1000)})},

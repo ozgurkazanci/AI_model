@@ -334,6 +334,35 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
 ]
 
 
+def build_system_message() -> str:
+    """Build the canonical system message: SYSTEM_PROMPT + rendered TOOL_DEFINITIONS.
+
+    THIS IS THE SINGLE SOURCE OF TRUTH for the system message.
+
+    Every training example and every inference call MUST use this exact string.
+    Training on one system prompt and serving with another is the single most
+    common cause of a fine-tuned model that will not emit tool calls at
+    inference time.
+
+    Never assemble the system message by hand — always call this function.
+    """
+    system_content = SYSTEM_PROMPT.strip() + "\n\n## Available Tools\n\n"
+    for tool in TOOL_DEFINITIONS:
+        func = tool["function"]
+        system_content += f"### {func['name']}\n{func['description']}\n"
+        if func.get("parameters", {}).get("properties"):
+            params = func["parameters"]["properties"]
+            param_strs = []
+            for pname, pinfo in params.items():
+                required = pname in func["parameters"].get("required", [])
+                req_str = " (required)" if required else " (optional)"
+                param_strs.append(f"  - `{pname}`: {pinfo.get('description', pinfo.get('type', ''))}{req_str}")
+            system_content += "Parameters:\n" + "\n".join(param_strs) + "\n"
+        system_content += "\n"
+
+    return system_content
+
+
 def format_trajectory_for_sft(trajectory: Any) -> list[dict[str, Any]]:
     """Convert a trajectory to the exact SFT training format.
 
@@ -351,22 +380,8 @@ def format_trajectory_for_sft(trajectory: Any) -> list[dict[str, Any]]:
     """
     messages: list[dict[str, Any]] = []
 
-    # System message with prompt and tools
-    system_content = SYSTEM_PROMPT.strip() + "\n\n## Available Tools\n\n"
-    for tool in TOOL_DEFINITIONS:
-        func = tool["function"]
-        system_content += f"### {func['name']}\n{func['description']}\n"
-        if func.get("parameters", {}).get("properties"):
-            params = func["parameters"]["properties"]
-            param_strs = []
-            for pname, pinfo in params.items():
-                required = pname in func["parameters"].get("required", [])
-                req_str = " (required)" if required else " (optional)"
-                param_strs.append(f"  - `{pname}`: {pinfo.get('description', pinfo.get('type', ''))}{req_str}")
-            system_content += "Parameters:\n" + "\n".join(param_strs) + "\n"
-        system_content += "\n"
-
-    messages.append({"role": "system", "content": system_content})
+    # System message with prompt and tools (canonical builder)
+    messages.append({"role": "system", "content": build_system_message()})
 
     # Process trajectory steps
     if hasattr(trajectory, "steps"):

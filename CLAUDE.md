@@ -8,6 +8,27 @@
 4. **ALWAYS** run `python -m pytest tests/ -v --tb=short` after changes
 5. **ALWAYS** push to GitHub after completing a phase
 6. **NO Unicode emoji** in scripts -- Windows cp1252 breaks them
+7. **NEVER build a system message by hand** -- call `build_system_message()` from
+   `asic_ai.data.format`. It is the single source of truth for training AND
+   inference. Never write `{"role": "system", "content": SYSTEM_PROMPT}`.
+8. **NEVER emit a tool call outside `TOOL_DEFINITIONS`** in training data --
+   the model learns to hallucinate tools that do not exist.
+
+## System Prompt Invariant
+
+Every SFT example and every inference call must carry the byte-identical output
+of `build_system_message()` (SYSTEM_PROMPT + rendered tool list, 7003 chars).
+Training on one prompt and serving with another silently kills tool calling.
+
+```bash
+PYTHONPATH=src python scripts/normalize_sft_system_prompt.py --check  # verify
+PYTHONPATH=src python scripts/normalize_sft_system_prompt.py --write  # repair
+PYTHONPATH=src python scripts/prepare_training_data.py                # regenerate split
+```
+
+Guarded by `tests/test_system_prompt_consistency.py` (43 tests): one prompt
+variant across the corpus, contract-only tool names, and no module referencing
+`SYSTEM_PROMPT` outside `format.py`.
 
 ## API Gotchas (transformers 5.16.1)
 

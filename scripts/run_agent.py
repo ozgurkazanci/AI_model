@@ -29,7 +29,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 import yaml
-from asic_ai.data.format import SYSTEM_PROMPT, TOOL_DEFINITIONS
+from asic_ai.data.format import TOOL_DEFINITIONS
 from asic_ai.data.trajectory import Trajectory, TrajectoryStep, ToolCall
 from asic_ai.data.format import format_trajectory_for_sft, validate_sft_format
 from asic_ai.training.rl_env import CircuitDesignEnv
@@ -147,11 +147,8 @@ def run_agent(model, tokenizer, task: dict, max_steps: int = 8, max_tokens: int 
     obs = env.reset(task)
 
     # Build tool list for system prompt
-    tool_names = ", ".join([t["function"]["name"] for t in TOOL_DEFINITIONS])
-    system_content = (
-        f"{SYSTEM_PROMPT}\n\nAvailable tools: {tool_names}\n\n"
-        "To call a tool, use: <tool_call>{\"name\": \"tool_name\", \"arguments\": {...}}</tool_call>"
-    )
+    # Must be byte-identical to the training-time system message.
+    system_content = build_system_message()
 
     specs_str = json.dumps(task.get("specs", {}), indent=2)
     user_content = (

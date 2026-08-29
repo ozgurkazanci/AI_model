@@ -42,6 +42,26 @@ PYTHONPATH=src python scripts/post_training_pipeline.py --model outputs/sft_loca
 
 > **NO Unicode emoji** in scripts — Windows cp1252 breaks them.
 
+> **NEVER build a system message by hand.** Call `build_system_message()` from
+> `asic_ai.data.format` — it renders SYSTEM_PROMPT + the tool list and is the
+> single source of truth for training data *and* inference. A model trained on
+> one system prompt and served with another silently stops emitting tool calls.
+
+> **NEVER emit a tool call outside `TOOL_DEFINITIONS`** in training data — the
+> model learns to hallucinate tools that do not exist.
+
+### System prompt invariant
+
+Every SFT example and every inference call carries the byte-identical output of
+`build_system_message()` (7003 chars). Enforced by
+`tests/test_system_prompt_consistency.py`.
+
+```bash
+PYTHONPATH=src python scripts/normalize_sft_system_prompt.py --check  # verify
+PYTHONPATH=src python scripts/normalize_sft_system_prompt.py --write  # repair sources
+PYTHONPATH=src python scripts/prepare_training_data.py                # regenerate train/val
+```
+
 ## Architecture
 
 ```

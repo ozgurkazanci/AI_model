@@ -32,31 +32,18 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 import yaml
-from asic_ai.data.format import SYSTEM_PROMPT, TOOL_DEFINITIONS
+from asic_ai.data.format import build_system_message
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("local_inference")
 
 
-def format_tools_for_prompt() -> str:
-    """Format tool definitions into system prompt section."""
-    tool_lines = []
-    for tool in TOOL_DEFINITIONS:
-        func = tool["function"]
-        tool_lines.append(f"- {func['name']}: {func['description']}")
-    return "\n".join(tool_lines)
-
-
 def build_prompt(task: dict) -> str:
     """Build the full prompt for a design task."""
     specs = json.dumps(task.get("specs", {}), indent=2)
-    tools = format_tools_for_prompt()
 
     return f"""<|im_start|>system
-{SYSTEM_PROMPT}
-
-Available Tools:
-{tools}
+{build_system_message()}
 <|im_end|>
 <|im_start|>user
 Design task: {task.get('description', task.get('id', 'unknown'))}
@@ -171,7 +158,7 @@ def run_interactive(engine):
     print("\n=== ASIC-AI Interactive Mode ===")
     print("Type 'quit' to exit, 'task:<id>' to load an eval task\n")
 
-    history = f"<|im_start|>system\n{SYSTEM_PROMPT}\n<|im_end|>\n"
+    history = f"<|im_start|>system\n{build_system_message()}\n<|im_end|>\n"
 
     while True:
         try:

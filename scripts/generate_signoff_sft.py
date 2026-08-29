@@ -17,8 +17,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from asic_ai.data.format import SYSTEM_PROMPT
-
 SEP = "=" * 60
 
 EXAMPLES = [
@@ -26,7 +24,7 @@ EXAMPLES = [
     {
         "id": "pvs_drc_fix",
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": build_system_message()},
             {"role": "user", "content": "My layout has DRC errors after adding guard rings. Fix the violations."},
             {"role": "assistant", "content": (
                 "Common guard ring DRC violations in sky130:\n\n"
@@ -69,7 +67,7 @@ EXAMPLES = [
     {
         "id": "pvs_lvs_debug",
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": build_system_message()},
             {"role": "user", "content": "LVS reports 3 unmatched nets. How do I debug this?"},
             {"role": "assistant", "content": (
                 "LVS debugging strategy:\n\n"
@@ -122,7 +120,7 @@ EXAMPLES = [
     {
         "id": "quantus_extraction",
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": build_system_message()},
             {"role": "user", "content": "How do I extract parasitics for post-layout simulation of my OTA?"},
             {"role": "assistant", "content": (
                 "Parasitic extraction flow with Quantus:\n\n"
@@ -179,7 +177,7 @@ EXAMPLES = [
     {
         "id": "signoff_full_flow",
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": build_system_message()},
             {"role": "user", "content": "What is the complete signoff flow before tapeout?"},
             {"role": "assistant", "content": (
                 "Complete IC signoff flow (pre-tapeout checklist):\n\n"

@@ -34,9 +34,9 @@ class DistillationGenerator:
     async def generate_trajectory(self, task: dict, max_steps: int = 20) -> Trajectory:
         """Run the strong model through the agent loop, recording every step."""
         logger.info(f"Generating trajectory for task {task.get('id', 'unknown')}")
-        from asic_ai.data.format import SYSTEM_PROMPT, TOOL_DEFINITIONS
+        from asic_ai.data.format import build_system_message
         messages = [
-            {"role": "system", "content": SYSTEM_PROMPT + "\n\n" + json.dumps(TOOL_DEFINITIONS)},
+            {"role": "system", "content": build_system_message()},
             {"role": "user", "content": task.get("spec", "Task specification")}
         ]
         

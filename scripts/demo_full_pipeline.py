@@ -28,7 +28,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 import yaml
 from asic_ai.data.format import (
-    SYSTEM_PROMPT,
     TOOL_DEFINITIONS,
     format_trajectory_for_sft,
     validate_sft_format,
@@ -284,7 +283,7 @@ def run_demo():
     print(f"  Reward:          {summary['total_reward']:.3f}")
     print(f"  SFT messages:    {len(sft_messages)}")
     print(f"  Format valid:    {is_valid}")
-    print(f"  System prompt:   {len(SYSTEM_PROMPT)} chars")
+    print(f"  System prompt:   {len(build_system_message())} chars")
     print(f"  Tool count:      {len(TOOL_DEFINITIONS)}")
     print(f"  Output file:     {output_path}")
     print(f"\n  Pipeline: Task -> RL Env -> Agent Loop -> Reward -> Trajectory -> SFT Format -> Validated")

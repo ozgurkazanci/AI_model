@@ -41,7 +41,7 @@ def create_app(model_path: str, simulator: str = "mock"):
         sys.exit(1)
 
     import yaml
-    from asic_ai.data.format import SYSTEM_PROMPT, TOOL_DEFINITIONS
+    from asic_ai.data.format import TOOL_DEFINITIONS
     from asic_ai.training.rl_env import CircuitDesignEnv
 
     app = FastAPI(
@@ -119,7 +119,7 @@ def create_app(model_path: str, simulator: str = "mock"):
 
     @app.get("/system-prompt")
     def get_system_prompt():
-        return {"prompt": SYSTEM_PROMPT, "tools": TOOL_DEFINITIONS}
+        return {"prompt": build_system_message(), "tools": TOOL_DEFINITIONS}
 
     @app.post("/design", response_model=DesignResponse)
     def run_design(req: DesignRequest):

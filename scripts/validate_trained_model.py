@@ -60,7 +60,6 @@ def validate_model(model_path: str) -> dict:
     """Run validation prompts through the model."""
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
-    from asic_ai.data.format import SYSTEM_PROMPT
 
     print(f"  Loading: {model_path}")
     tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
@@ -76,7 +75,7 @@ def validate_model(model_path: str) -> dict:
         print(f"\n  [{vp['id']}] {vp['prompt'][:60]}...")
 
         messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": build_system_message()},
             {"role": "user", "content": vp["prompt"]},
         ]
         text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)

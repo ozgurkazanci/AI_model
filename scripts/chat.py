@@ -18,7 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from asic_ai.data.format import SYSTEM_PROMPT, TOOL_DEFINITIONS
+from asic_ai.data.format import TOOL_DEFINITIONS
 
 SEP = "=" * 60
 
@@ -49,11 +49,8 @@ def main():
     params = sum(p.numel() for p in model.parameters()) / 1e6
     print(f"  Loaded: {params:.0f}M params")
 
-    tool_names = ", ".join([t["function"]["name"] for t in TOOL_DEFINITIONS])
-    system_content = (
-        f"{SYSTEM_PROMPT}\n\nAvailable tools: {tool_names}\n\n"
-        "To call a tool, use: <tool_call>{\"name\": \"tool_name\", \"arguments\": {...}}</tool_call>"
-    )
+    # Must be byte-identical to the training-time system message.
+    system_content = build_system_message()
 
     messages = [{"role": "system", "content": system_content}]
 

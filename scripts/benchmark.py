@@ -17,8 +17,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from asic_ai.data.format import SYSTEM_PROMPT
-
 SEP = "=" * 60
 
 BENCHMARK_PROMPTS = [
@@ -38,14 +36,14 @@ def benchmark_model(model, tokenizer, prompts, max_tokens=64, runs=3):
     for run_idx in range(runs):
         for prompt in prompts:
             messages = [
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": build_system_message()},
                 {"role": "user", "content": prompt},
             ]
 
             if hasattr(tokenizer, "apply_chat_template"):
                 text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
             else:
-                text = f"<|im_start|>system\n{SYSTEM_PROMPT}<|im_end|>\n<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n"
+                text = f"<|im_start|>system\n{build_system_message()}<|im_end|>\n<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n"
 
             inputs = tokenizer(text, return_tensors="pt", truncation=True, max_length=2048)
             input_len = inputs["input_ids"].shape[1]

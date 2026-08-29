@@ -18,15 +18,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from asic_ai.data.format import SYSTEM_PROMPT
-
 SEP = "=" * 60
 
 EXAMPLES = [
     {
         "id": "layout_matching",
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": build_system_message()},
             {"role": "user", "content": "How should I layout a differential pair for best matching in sky130?"},
             {"role": "assistant", "content": (
                 "Differential pair matching is critical for offset voltage. Key techniques:\n\n"
@@ -65,7 +63,7 @@ EXAMPLES = [
     {
         "id": "layout_floorplan_ota",
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": build_system_message()},
             {"role": "user", "content": "Create a floorplan for a two-stage OTA with Miller compensation."},
             {"role": "assistant", "content": (
                 "Two-stage OTA floorplan:\n\n"
@@ -112,7 +110,7 @@ EXAMPLES = [
     {
         "id": "layout_current_mirror",
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": build_system_message()},
             {"role": "user", "content": "How do I layout a 1:4 current mirror with good accuracy?"},
             {"role": "assistant", "content": (
                 "1:4 current mirror layout for accuracy:\n\n"
@@ -151,7 +149,7 @@ EXAMPLES = [
     {
         "id": "layout_noise_routing",
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": build_system_message()},
             {"role": "user", "content": "What are the best practices for routing in a mixed-signal IC to minimize noise coupling?"},
             {"role": "assistant", "content": (
                 "Mixed-signal routing noise isolation techniques:\n\n"

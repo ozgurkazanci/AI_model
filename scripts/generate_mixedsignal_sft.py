@@ -13,7 +13,6 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-from asic_ai.data.format import SYSTEM_PROMPT
 
 
 def build_examples():
@@ -22,7 +21,7 @@ def build_examples():
     # 1. PLL Lock Time Analysis
     examples.append({
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": build_system_message()},
             {"role": "user", "content": "Design a 1 GHz charge pump PLL with lock time < 10 us in sky130 1.8V."},
             {"role": "assistant", "content": """I'll design a Type-II charge pump PLL for 1 GHz output.
 
@@ -70,7 +69,7 @@ The design meets all requirements. Key trade-offs:
     # 2. Flash ADC Comparator Design
     examples.append({
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": build_system_message()},
             {"role": "user", "content": "Design a 3-bit flash ADC front-end with DNL < 0.5 LSB at 1 GS/s."},
             {"role": "assistant", "content": """For a 3-bit flash ADC at 1 GS/s, the critical components are:
 
@@ -116,7 +115,7 @@ Final design summary:
     # 3. R-2R DAC Linearity
     examples.append({
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": build_system_message()},
             {"role": "user", "content": "Design a 4-bit R-2R DAC with DNL < 0.2 LSB and settling time < 100 ns."},
             {"role": "assistant", "content": """R-2R DAC design for 4-bit resolution:
 
@@ -162,7 +161,7 @@ Design is compliant. For production:
     # 4. LNA Noise Figure Optimization
     examples.append({
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": build_system_message()},
             {"role": "user", "content": "Design a common-gate LNA for 2.4 GHz WiFi with NF < 3 dB and gain > 15 dB."},
             {"role": "assistant", "content": """Common-gate LNA for 2.4 GHz WiFi:
 
@@ -221,7 +220,7 @@ Final specs:
     # 5. Sigma-Delta ADC Noise Shaping
     examples.append({
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": build_system_message()},
             {"role": "user", "content": "Design a 1st-order sigma-delta modulator for 16-bit audio ADC at 48 kHz."},
             {"role": "assistant", "content": """1st-order sigma-delta modulator for audio:
 
@@ -266,7 +265,7 @@ Key design challenges:
     # 6. VCO Phase Noise (Spectre format)
     examples.append({
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": build_system_message()},
             {"role": "user", "content": "Analyze the phase noise of a 5 GHz LC-VCO and optimize for -110 dBc/Hz at 1 MHz offset."},
             {"role": "assistant", "content": """LC-VCO phase noise analysis using Leeson's model:
 
@@ -313,7 +312,7 @@ The design meets -110 dBc/Hz at 1 MHz. Key optimizations applied:
     # 7. SAR ADC Design Flow
     examples.append({
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": build_system_message()},
             {"role": "user", "content": "Design an 8-bit SAR ADC with 10 MS/s sampling rate in gf180mcu 3.3V."},
             {"role": "assistant", "content": """8-bit SAR ADC design in gf180mcu:
 
@@ -364,7 +363,7 @@ Layout considerations:
     # 8. Power Management: Buck Converter
     examples.append({
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": build_system_message()},
             {"role": "user", "content": "Design a switching voltage regulator (buck converter) from 3.3V to 1.2V at 500 mA."},
             {"role": "assistant", "content": """Buck converter design: 3.3V -> 1.2V @ 500 mA
 

@@ -49,7 +49,6 @@ def load_and_generate(model_path: str, prompts: list[dict], max_tokens: int = 12
     """Load model and generate responses for all prompts."""
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
-    from asic_ai.data.format import SYSTEM_PROMPT
 
     tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
     model = AutoModelForCausalLM.from_pretrained(
@@ -61,14 +60,14 @@ def load_and_generate(model_path: str, prompts: list[dict], max_tokens: int = 12
     results = []
     for p in prompts:
         messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": build_system_message()},
             {"role": "user", "content": p["prompt"]},
         ]
 
         if hasattr(tokenizer, "apply_chat_template"):
             prompt_text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         else:
-            prompt_text = f"<|im_start|>system\n{SYSTEM_PROMPT}<|im_end|>\n<|im_start|>user\n{p['prompt']}<|im_end|>\n<|im_start|>assistant\n"
+            prompt_text = f"<|im_start|>system\n{build_system_message()}<|im_end|>\n<|im_start|>user\n{p['prompt']}<|im_end|>\n<|im_start|>assistant\n"
 
         inputs = tokenizer(prompt_text, return_tensors="pt", truncation=True, max_length=3072)
         t0 = time.time()

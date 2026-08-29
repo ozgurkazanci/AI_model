@@ -21,7 +21,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 import yaml
-from asic_ai.data.format import SYSTEM_PROMPT, TOOL_DEFINITIONS, format_trajectory_for_sft, validate_sft_format
+from asic_ai.data.format import TOOL_DEFINITIONS, format_trajectory_for_sft, validate_sft_format
 from asic_ai.data.trajectory import Trajectory, TrajectoryStep, ToolCall
 from asic_ai.reward.reward import RewardFunction
 

@@ -103,7 +103,6 @@ def generate_response(model, tokenizer, prompt: str, system: str = None,
 
 def interactive_chat(model, tokenizer):
     """Interactive chat loop."""
-    from asic_ai.data.format import SYSTEM_PROMPT
 
     print("\n" + "=" * 60)
     print("   ASIC-AI Interactive Chat")
@@ -121,7 +120,7 @@ def interactive_chat(model, tokenizer):
             break
 
         response, n_tokens, elapsed, tps = generate_response(
-            model, tokenizer, prompt, system=SYSTEM_PROMPT
+            model, tokenizer, prompt, system=build_system_message()
         )
 
         safe = response.encode("ascii", "replace").decode("ascii")
@@ -131,7 +130,6 @@ def interactive_chat(model, tokenizer):
 
 def benchmark_prompts(model, tokenizer):
     """Run benchmark prompts and report performance."""
-    from asic_ai.data.format import SYSTEM_PROMPT
 
     prompts = [
         "Design a two-stage Miller OTA with 60 dB gain and 10 MHz GBW in sky130.",
@@ -149,7 +147,7 @@ def benchmark_prompts(model, tokenizer):
 
     for i, prompt in enumerate(prompts):
         response, n_tokens, elapsed, tps = generate_response(
-            model, tokenizer, prompt, system=SYSTEM_PROMPT, max_tokens=128
+            model, tokenizer, prompt, system=build_system_message(), max_tokens=128
         )
         total_tokens += n_tokens
         total_time += elapsed
@@ -187,9 +185,8 @@ def main():
     elif args.benchmark:
         benchmark_prompts(model, tokenizer)
     elif args.prompt:
-        from asic_ai.data.format import SYSTEM_PROMPT
         response, n_tokens, elapsed, tps = generate_response(
-            model, tokenizer, args.prompt, system=SYSTEM_PROMPT
+            model, tokenizer, args.prompt, system=build_system_message()
         )
         safe = response.encode("ascii", "replace").decode("ascii")
         print(safe)

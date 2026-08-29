@@ -15,8 +15,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from asic_ai.data.format import SYSTEM_PROMPT
-
 SEP = "=" * 60
 
 # Spectre SCS format examples with expert reasoning
@@ -355,7 +353,7 @@ def main():
     for ex in SPECTRE_EXAMPLES:
         example = {
             "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": build_system_message()},
                 {"role": "user", "content": ex["task"]},
                 {"role": "assistant", "content": (
                     f"{ex['reasoning']}\n\n"

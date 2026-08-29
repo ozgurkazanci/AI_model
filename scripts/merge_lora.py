@@ -112,9 +112,8 @@ def main():
     # Optional: test inference
     if args.test:
         print(f"\n  Running inference test...")
-        from asic_ai.data.format import SYSTEM_PROMPT
         messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": build_system_message()},
             {"role": "user", "content": "Design a simple OTA for sky130. Start with a PDK query."},
         ]
         prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)

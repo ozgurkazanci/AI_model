@@ -20,7 +20,6 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-from asic_ai.data.format import SYSTEM_PROMPT
 
 
 def build_examples():
@@ -29,7 +28,7 @@ def build_examples():
     # 1. Convergence failure diagnosis
     examples.append({
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": build_system_message()},
             {"role": "user", "content": "My OTA simulation fails with 'no convergence at DC operating point'. How do I fix it?"},
             {"role": "assistant", "content": """DC convergence failure is one of the most common simulation issues. Let me diagnose:
 
@@ -82,7 +81,7 @@ General convergence debugging checklist:
     # 2. Gain too low - systematic debug
     examples.append({
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": build_system_message()},
             {"role": "user", "content": "My folded cascode OTA shows only 35 dB gain. I need 60 dB. What's wrong?"},
             {"role": "assistant", "content": """35 dB gain for a folded cascode is unusually low. A properly designed folded cascode should achieve 60-80 dB.
 
@@ -124,7 +123,7 @@ Key lesson: In cascode circuits, **always verify all cascode devices are in satu
     # 3. Phase margin too low - compensation fix
     examples.append({
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": build_system_message()},
             {"role": "user", "content": "My two-stage OTA has 15 degrees phase margin. It oscillates in closed loop. Fix it."},
             {"role": "assistant", "content": """15 degrees phase margin will definitely cause oscillation. Two-stage OTAs need Miller compensation.
 
@@ -169,7 +168,7 @@ Compensation sizing rules of thumb:
     # 4. Power consumption too high
     examples.append({
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": build_system_message()},
             {"role": "user", "content": "My bandgap reference draws 500 uA. Budget is 50 uA. How to reduce power 10x?"},
             {"role": "assistant", "content": """10x power reduction requires fundamental changes. Let me analyze where the current goes:
 
@@ -211,7 +210,7 @@ Mitigation:
     # 5. DRC violations - metal density
     examples.append({
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": build_system_message()},
             {"role": "user", "content": "PVS DRC shows 147 metal density violations. How to fix efficiently?"},
             {"role": "assistant", "content": """Metal density violations are the most common DRC errors. They come in two types:
 1. **Min density**: Not enough metal (needs fill)
@@ -267,7 +266,7 @@ Grounded fill adds parasitic capacitance to signal nets."""}
     # 6. Corner failure analysis
     examples.append({
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": build_system_message()},
             {"role": "user", "content": "LDO passes at TT 27C but fails output regulation at SS -40C. Why?"},
             {"role": "assistant", "content": """SS corner at -40C is the worst case for LDO regulation because:
 1. Lower gm (slower transistors)
@@ -317,7 +316,7 @@ Min specs should be met at worst-case corner, not typical."""}
     # 7. LVS mismatch debug
     examples.append({
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": build_system_message()},
             {"role": "user", "content": "LVS reports 3 shorts and 2 opens. How do I find and fix them?"},
             {"role": "assistant", "content": """LVS shorts and opens are layout-vs-schematic mismatches. Let me analyze:
 
@@ -354,7 +353,7 @@ After fixes, re-run LVS to verify clean."""}
     # 8. Noise too high - systematic reduction
     examples.append({
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": build_system_message()},
             {"role": "user", "content": "My sensor readout amplifier has 50 uV RMS input noise. Need < 10 uV. How?"},
             {"role": "assistant", "content": """5x noise reduction requires understanding the noise sources. Let me analyze:
 
@@ -406,7 +405,7 @@ Trade-offs:
     # 9. Simulation setup error
     examples.append({
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": build_system_message()},
             {"role": "user", "content": "AC simulation shows flat 0 dB gain. The circuit definitely has gain. What's wrong?"},
             {"role": "assistant", "content": """Flat 0 dB usually means the AC stimulus isn't reaching the circuit properly. Common mistakes:
 
@@ -447,7 +446,7 @@ After fixing, expect to see proper frequency response with gain rolloff."""}
     # 10. Matching and mismatch effects
     examples.append({
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": build_system_message()},
             {"role": "user", "content": "My current mirror has 5% mismatch. How to improve to < 1%?"},
             {"role": "assistant", "content": """5% current mirror mismatch is typical for minimum-size devices. Sources:
 

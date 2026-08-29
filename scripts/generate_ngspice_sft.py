@@ -21,7 +21,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from asic_ai.adapters.ngspice_shared import NgspiceSharedAdapter, find_ngspice_dll
 from asic_ai.adapters.base import AdapterConfig
 from asic_ai.tool_interface.schema import SimParams
-from asic_ai.data.format import SYSTEM_PROMPT
 
 SEP = "=" * 60
 
@@ -325,7 +324,7 @@ def run_simulation(adapter, circuit: dict, tmpdir: str) -> dict:
 def build_sft_example(circuit: dict, sim_result: dict) -> dict:
     """Build a single SFT training example from circuit + simulation."""
     messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": build_system_message()},
         {"role": "user", "content": circuit["task"]},
         {
             "role": "assistant",

@@ -103,14 +103,14 @@ def main():
     # Step 2: Format prompt with system prompt + tools
     # =============================================
     print(f"\n[2/8] Formatting prompt...")
-    from asic_ai.data.format import SYSTEM_PROMPT, TOOL_DEFINITIONS
+    from asic_ai.data.format import TOOL_DEFINITIONS
 
     # Build chatml prompt
     tool_names = [t["function"]["name"] for t in TOOL_DEFINITIONS]
     tool_list = ", ".join(tool_names)
 
     messages = [
-        {"role": "system", "content": f"{SYSTEM_PROMPT}\n\nAvailable tools: {tool_list}"},
+        {"role": "system", "content": build_system_message()},
         {"role": "user", "content": (
             "Design a simple two-stage OTA for sky130 PDK.\n"
             "Specs: dc_gain > 60dB, UGB > 30MHz, PM > 60deg, Idd < 500uA.\n"
@@ -129,7 +129,7 @@ def main():
         prompt += "<|im_start|>assistant\n"
 
     prompt_tokens = len(tokenizer.encode(prompt))
-    print(f"  System prompt: {len(SYSTEM_PROMPT)} chars")
+    print(f"  System prompt: {len(build_system_message())} chars")
     print(f"  Tools: {len(TOOL_DEFINITIONS)}")
     print(f"  Prompt tokens: {prompt_tokens}")
 

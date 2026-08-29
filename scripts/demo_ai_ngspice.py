@@ -152,7 +152,6 @@ def run_model_inference(model_path: str | None):
         try:
             import torch
             from transformers import AutoModelForCausalLM, AutoTokenizer
-            from asic_ai.data.format import SYSTEM_PROMPT
 
             tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
             model = AutoModelForCausalLM.from_pretrained(
@@ -168,7 +167,7 @@ def run_model_inference(model_path: str | None):
             )
 
             messages = [
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": build_system_message()},
                 {"role": "user", "content": prompt},
             ]
 

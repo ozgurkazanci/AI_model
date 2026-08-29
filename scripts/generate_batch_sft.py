@@ -22,8 +22,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from asic_ai.data.format import SYSTEM_PROMPT
-
 SEP = "=" * 60
 
 # Circuit topology templates
@@ -234,7 +232,7 @@ def generate_example(idx):
     analysis_response = generate_analysis_response(analysis, topology, specs_str)
     
     messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": build_system_message()},
         {"role": "user", "content": user_prompt},
         {"role": "assistant", "content": design_response},
         {"role": "tool", "content": tool_response},

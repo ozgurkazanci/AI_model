@@ -18,8 +18,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from asic_ai.data.format import SYSTEM_PROMPT
-
 SEP = "=" * 60
 
 EXAMPLES = [
@@ -27,7 +25,7 @@ EXAMPLES = [
     {
         "id": "iter_cs_gain",
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": build_system_message()},
             {"role": "user", "content": "Design a common-source amplifier with DC gain > 30 dB, bandwidth > 100 MHz, power < 1 mW in sky130 1.8V."},
             {"role": "assistant", "content": (
                 "Let me analyze the specifications:\n"
@@ -108,7 +106,7 @@ EXAMPLES = [
     {
         "id": "error_convergence",
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": build_system_message()},
             {"role": "user", "content": "Design a differential amplifier with gain > 40 dB."},
             {"role": "assistant", "content": (
                 "I'll design a PMOS-input diff pair with NMOS current mirror load.\n"
@@ -158,7 +156,7 @@ EXAMPLES = [
     {
         "id": "tradeoff_power_speed",
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": build_system_message()},
             {"role": "user", "content": "I need an OTA with GBW > 500 MHz and power < 500 uW. Is this feasible in sky130?"},
             {"role": "assistant", "content": (
                 "Let me analyze the feasibility:\n\n"
@@ -204,7 +202,7 @@ EXAMPLES = [
     {
         "id": "corner_failure_fix",
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": build_system_message()},
             {"role": "user", "content": "My LDO regulator passes at TT but fails at SS corner. How do I fix it?"},
             {"role": "assistant", "content": (
                 "SS (Slow-Slow) corner typically causes:\n"
@@ -259,7 +257,7 @@ EXAMPLES = [
     {
         "id": "pdk_query_design",
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": build_system_message()},
             {"role": "user", "content": "What MOSFET devices are available in sky130 for a low-noise amplifier?"},
             {"role": "assistant", "content": (
                 "Let me query the PDK for available devices:\n\n"
