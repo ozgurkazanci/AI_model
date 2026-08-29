@@ -41,7 +41,7 @@ def create_app(model_path: str, simulator: str = "mock"):
         sys.exit(1)
 
     import yaml
-    from asic_ai.data.format import TOOL_DEFINITIONS
+    from asic_ai.data.format import TOOL_DEFINITIONS, build_system_message
     from asic_ai.training.rl_env import CircuitDesignEnv
 
     app = FastAPI(

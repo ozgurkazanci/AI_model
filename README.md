@@ -60,8 +60,8 @@ AI_model/
 │   │   └── val_final.jsonl    # 42 validation
 │   ├── examples/          # Gold-standard trajectories (OTA, LDO, bandgap, counter)
 │   └── corpus_registry.yaml  # CPT source tracking with licenses
-├── scripts/               # 38 CLI tools
-├── tests/                 # 187 passed, 0 skipped (17 test files)
+├── scripts/               # 48 CLI tools
+├── tests/                 # 242 passed, 0 skipped (17 test files)
 └── docs/                  # Design docs, handoff guide, tool contract
 ```
 
@@ -95,7 +95,7 @@ CPT (domain knowledge) → SFT (agent behavior) → RL/GRPO (design skill)
 # Install
 pip install -r requirements.txt
 
-# Run tests (175 passed, 0 skipped)
+# Run tests (242 passed, 0 skipped)
 PYTHONPATH=src pytest tests/ -v
 
 # Run full pipeline demo (no GPU, no simulator needed)

@@ -29,6 +29,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 import yaml
 from asic_ai.data.format import (
     TOOL_DEFINITIONS,
+    build_system_message,
     format_trajectory_for_sft,
     validate_sft_format,
 )

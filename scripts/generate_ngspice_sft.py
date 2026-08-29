@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from asic_ai.adapters.ngspice_shared import NgspiceSharedAdapter, find_ngspice_dll
 from asic_ai.adapters.base import AdapterConfig
+from asic_ai.data.format import build_system_message
 from asic_ai.tool_interface.schema import SimParams
 
 SEP = "=" * 60
