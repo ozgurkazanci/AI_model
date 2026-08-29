@@ -1,0 +1,21 @@
+id: r2r_dac_4bit_001
+category: analog
+pdk: sky130
+supply: 1.8
+topology_hint: 4-bit R-2R DAC
+load: 10p
+description: Design a 4-bit R-2R ladder DAC.
+specs:
+  resolution:
+    target: 4
+    unit: bits
+  dnl:
+    max: 0.5
+    unit: LSB
+  settling_time:
+    max: 100.0e-9
+    unit: s
+corners: [tt, ss, ff]
+temp_range: [-40, 125]
+pass_criteria: all_corners
+difficulty: medium

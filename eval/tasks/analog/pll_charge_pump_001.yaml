@@ -1,0 +1,24 @@
+id: pll_charge_pump_001
+category: analog
+pdk: sky130
+supply: 1.8
+topology_hint: Charge pump PLL
+load: 10p
+description: Design a type-II charge pump PLL for 1 GHz clock generation.
+specs:
+  frequency:
+    target: 1.0e9
+    unit: Hz
+  jitter_rms:
+    max: 5.0e-12
+    unit: s
+  lock_time:
+    max: 10.0e-6
+    unit: s
+  phase_noise_1mhz:
+    max: -100
+    unit: dBc/Hz
+corners: [tt, ss, ff]
+temp_range: [-40, 125]
+pass_criteria: all_corners
+difficulty: hard

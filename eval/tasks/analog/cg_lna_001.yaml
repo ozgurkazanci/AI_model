@@ -1,0 +1,24 @@
+id: cg_lna_001
+category: analog
+pdk: sky130
+supply: 1.8
+topology_hint: Common-gate LNA
+load: 1p
+description: Design a common-gate LNA for 2.4 GHz WiFi.
+specs:
+  gain:
+    min: 15
+    unit: dB
+  nf:
+    max: 3.0
+    unit: dB
+  s11:
+    max: -10
+    unit: dB
+  iip3:
+    min: 0
+    unit: dBm
+corners: [tt, ss, ff]
+temp_range: [-40, 85]
+pass_criteria: all_corners
+difficulty: hard
