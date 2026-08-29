@@ -1,8 +1,8 @@
 # ASIC Devre Tasarımı için Özel AI Modeli — Tasarım Dokümanı
 
-**Sürüm:** 1.0
-**Tarih:** 28 Ağustos 2026
-**Durum:** Tasarım kararları alındı, altyapı kodu tamamlandı, eğitim başlamadı
+**Sürüm:** 2.0
+**Tarih:** 29 Ağustos 2026
+**Durum:** SFT eğitimi tamamlandı, 35B cloud eğitimi hazır, 1050 SFT, 199 test, 78 eval
 
 > Bu doküman bir kodlama ajanına (Antigravity / Claude Code) verilmek üzere yazılmıştır.
 > Teknik terimler, API isimleri ve kod İngilizce bırakılmıştır.
