@@ -146,8 +146,18 @@ def calculate_gm(w: float, l: float, id: float, pdk: str = "sky130", device: str
 
 
 def calculate_mismatch_sigma(w: float, l: float, pdk: str = "sky130", device: str = "nmos") -> float:
-    """Calculate Vth mismatch sigma: sigma_Vth = Avt / sqrt(W*L)."""
+    """Calculate Vth mismatch sigma in volts: sigma_Vth = Avt / sqrt(W*L).
+
+    Args:
+        w: Width in meters (e.g., 10e-6 for 10 um)
+        l: Length in meters (e.g., 0.5e-6 for 0.5 um)
+    Returns:
+        sigma_Vth in volts
+    """
     params = get_pdk_params(pdk)[device]
-    avt = params["avt"]
+    avt = params["avt"]  # in V*um (e.g., 4.5e-3 V*um)
     import math
-    return avt / math.sqrt(w * l)
+    # Convert W, L from meters to microns for matching Avt units
+    w_um = w * 1e6
+    l_um = l * 1e6
+    return avt / math.sqrt(w_um * l_um)  # result in volts

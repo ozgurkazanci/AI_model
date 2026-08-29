@@ -92,3 +92,87 @@ class TestTemplateSpecs:
         t = get_template("ldo_basic")
         assert "dropout" in t.typical_specs
         assert "psrr" in t.typical_specs
+
+
+class TestNewTemplates:
+    """Tests for Phase 58 templates: PLL, ADC, DAC, LNA."""
+
+    def test_pll_exists(self):
+        t = get_template("charge_pump_pll")
+        assert t.category == "analog"
+        assert "lock_time" in t.typical_specs
+        assert "jitter" in t.typical_specs
+
+    def test_flash_adc_exists(self):
+        t = get_template("flash_adc_3bit")
+        assert t.category == "analog"
+        assert "resolution" in t.typical_specs
+        assert "dnl" in t.typical_specs
+
+    def test_r2r_dac_exists(self):
+        t = get_template("r2r_dac_4bit")
+        assert t.category == "analog"
+        assert "resolution" in t.typical_specs
+        assert "settling_time" in t.typical_specs
+
+    def test_cg_lna_exists(self):
+        t = get_template("cg_lna")
+        assert t.category == "analog"
+        assert "gain" in t.typical_specs
+        assert "nf" in t.typical_specs
+        assert "s11" in t.typical_specs
+
+    def test_pll_render(self):
+        rendered = render_template("charge_pump_pll", wp=20, wn=10)
+        assert "20" in rendered
+        assert "charge_pump_pll" in rendered
+
+    def test_all_new_templates_have_design_notes(self):
+        for tid in ["charge_pump_pll", "flash_adc_3bit", "r2r_dac_4bit", "cg_lna"]:
+            t = get_template(tid)
+            assert t.design_notes, f"{tid} missing design_notes"
+
+
+class TestPDKKnowledge:
+    """Tests for PDK knowledge base."""
+
+    def test_sky130_params(self):
+        from asic_ai.data.pdk_knowledge import get_pdk_params
+        p = get_pdk_params("sky130")
+        assert p["process_name"] == "sky130"
+        assert p["supply_voltage"] == 1.8
+        assert p["nmos"]["vth0"] == pytest.approx(0.49, abs=0.1)
+        assert p["pmos"]["vth0"] == pytest.approx(-0.54, abs=0.1)
+
+    def test_gf180mcu_params(self):
+        from asic_ai.data.pdk_knowledge import get_pdk_params
+        p = get_pdk_params("gf180mcu")
+        assert p["supply_voltage"] == 3.3
+
+    def test_unknown_pdk_raises(self):
+        from asic_ai.data.pdk_knowledge import get_pdk_params
+        with pytest.raises(KeyError):
+            get_pdk_params("unknown_pdk")
+
+    def test_calculate_gm(self):
+        from asic_ai.data.pdk_knowledge import calculate_gm
+        gm = calculate_gm(10e-6, 0.5e-6, 100e-6)
+        assert gm > 0
+        assert gm < 10e-3  # reasonable range
+
+    def test_calculate_mismatch(self):
+        from asic_ai.data.pdk_knowledge import calculate_mismatch_sigma
+        sig = calculate_mismatch_sigma(10e-6, 0.5e-6)
+        assert sig > 0
+        assert sig < 50e-3  # reasonable mV range
+
+    def test_sky130_corners(self):
+        from asic_ai.data.pdk_knowledge import get_pdk_params
+        p = get_pdk_params("sky130")
+        corners = p["corners"]
+        assert "tt" in corners
+        assert "ss" in corners
+        assert "ff" in corners
+        assert corners["tt"]["temperature"] == 27
+        assert corners["ss"]["temperature"] == -40
+
