@@ -1,90 +1,78 @@
 ---
-license: apache-2.0
 language:
-  - en
+- en
+license: apache-2.0
 tags:
-  - asic
-  - eda
-  - vlsi
-  - cmos
-  - circuit-design
-  - analog
-  - digital
-  - spice
-  - agent
-  - tool-calling
+- circuit-design
+- eda
+- asic
+- analog
+- vlsi
+- spice
+- tool-calling
 base_model: Qwen/Qwen3.6-35B-A3B
+datasets:
+- custom
 pipeline_tag: text-generation
 ---
 
-# ASIC-AI: Domain-Specialized Circuit Design Agent
+# ASIC-AI: Circuit Design Agent
 
-A domain-specialized language model fine-tuned for **ASIC analog and digital CMOS circuit design**.
-Unlike one-shot generators, this model operates as an **agent** — iterating through a structured design loop with real simulator feedback.
+An AI agent fine-tuned for ASIC/VLSI circuit design tasks. The model can:
 
-## Model Description
+- **Design analog circuits** (OTA, bandgap, LDO, PLL, ADC, DAC, LNA)
+- **Design digital circuits** (FSM, FIFO, SPI, counters, SRAM)
+- **Run simulations** via tool calls (ngspice, Cadence Spectre)
+- **Analyze results** (gain, bandwidth, phase margin, noise)
+- **Physical verification** (DRC fix, LVS debug, parasitic extraction)
+- **Layout guidance** (matching, floorplanning, noise routing)
 
-- **Base Model**: Qwen3.6-35B-A3B (MoE, 35B total / 3B active)
-- **Training**: CPT (domain knowledge) → SFT (agent trajectories) → RL/GRPO (simulator reward)
-- **Architecture**: Mixture of Experts, agentic tool-calling
-- **License**: Apache 2.0
+## Model Details
 
-## How It Works
-
-```
-spec → topology → netlist → simulate → diagnose → fix → re-simulate → until spec met
-```
-
-The model uses 15 specialized tools:
-
-| Tool | Purpose |
-|------|---------|
-| `sim.dc/ac/tran/noise/stb` | Run SPICE simulations |
-| `sim.corners/mc` | PVT corner and Monte Carlo analysis |
-| `spec.check` | Verify against specifications |
-| `pdk.device_query/list_devices/get_corners` | PDK parameter retrieval |
-| `netlist.patch` | Modify circuit netlist |
-| `lint.check` | Structural error checking |
-| `opt.suggest` | Numerical optimization suggestions |
-| `meas.eval` | Measurement evaluation |
-
-## Intended Use
-
-- Analog circuit design: OTA, LDO, bandgap, comparator, current mirror, etc.
-- Digital circuit design: counters, FSMs, FIFOs, ALUs, serial interfaces
-- Circuit debugging and optimization
-- Design space exploration
+- **Base Model**: Qwen3.6-35B-A3B (MoE, 3B active params)
+- **Fine-tuning**: SFT with LoRA (r=64, alpha=128)
+- **Training Data**: 1032 examples covering full IC design flow
+- **Tool Interface**: 15 specialized EDA tools
+- **Simulators**: ngspice (verified), Cadence Spectre 24.1.0
+- **Circuit Templates**: 17 parameterized topologies
 
 ## Training Data
 
-- **SFT**: 20,000-50,000 agent trajectories (distillation + synthetic perturbation)
-- **RL**: Simulator-in-the-loop GRPO with verifiable reward
-- **Format**: ChatML with `<tool_call>` tags
+| Domain | Examples | Topics |
+|--------|----------|--------|
+| Analog | 258 | CS amp, OTA, bandgap, LDO |
+| Digital | 58 | FSM, FIFO, SPI, counters |
+| Diverse tools | 71 | All 14 tool types |
+| Batch | 600 | 20 topologies x 5 analyses x 4 PDKs |
+| Real ngspice | 16 | Verified simulation results |
+| Spectre | 6 | .scs netlist format |
+| Reasoning | 5 | Multi-step design iteration |
+| Signoff | 4 | DRC, LVS, extraction |
+| Layout | 4 | Matching, floorplan, routing |
+| RTL | 4 | Verilog/SystemVerilog |
+| PDK | 10 | PVT corner analysis |
+| **Total** | **1032** | **929 train + 103 val** |
 
-## Evaluation
+## Tool Interface
 
-Evaluated on 54 circuit design tasks (36 analog + 18 digital) across easy/medium/hard difficulties.
+```
+sim.dc, sim.ac, sim.tran, sim.noise, sim.stb,
+sim.corners, sim.mc, pdk.device_query, pdk.get_corners,
+spec.check, spec.optimize, netlist.get, netlist.patch,
+lint.check, report.generate
+```
 
-| Category | Tasks | Baseline | After SFT | After RL |
-|----------|-------|----------|-----------|----------|
-| Analog   | 36    | TBD      | TBD       | TBD      |
-| Digital  | 18    | TBD      | TBD       | TBD      |
+## License
 
-## Limitations
-
-- Requires a SPICE simulator (ngspice/nabla) for actual design work
-- PDK parameters are retrieved, not memorized — needs PDK access
-- Numerical optimization (W/L sizing) delegated to Bayesian optimizer
-- Not suitable for layout or physical design tasks
+Apache 2.0
 
 ## Citation
 
 ```bibtex
 @software{asic_ai_2026,
-  title = {ASIC-AI: Domain-Specialized Circuit Design Agent},
-  author = {Kazanci, Ozgur},
-  year = {2026},
-  url = {https://github.com/ozgurkazanci/AI_model},
-  license = {Apache-2.0}
+  title={ASIC-AI: Circuit Design Agent},
+  author={Kazanci, Ozgur},
+  year={2026},
+  url={https://github.com/ozgurkazanci/AI_model}
 }
 ```

@@ -98,7 +98,7 @@ class TestTemplatesCoverage:
 
     def test_total_template_count(self):
         from asic_ai.data.templates import list_templates
-        assert len(list_templates()) == 13
+        assert len(list_templates()) == 17
 
     def test_all_have_typical_specs(self):
         from asic_ai.data.templates import list_templates

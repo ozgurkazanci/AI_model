@@ -598,6 +598,167 @@ C1 out 0 {c}n
     design_notes="ngspice-verified. f3dB = 1/(2*pi*R*C). First-order -20 dB/dec rolloff.",
 )
 
+# --- New templates: PLL, ADC, DAC, LNA ---
+
+CHARGE_PUMP_PLL = CircuitTemplate(
+    id="charge_pump_pll",
+    name="Charge Pump PLL",
+    category="analog",
+    description="Type-II charge pump PLL with loop filter for clock generation.",
+    netlist="""\
+.subckt charge_pump_pll vco_out ref_clk vdd vss
+* Phase Frequency Detector (simplified behavioral)
+* PFD outputs UP and DN pulses
+
+* Charge Pump
+M1 vdd up net_cp vdd pmos w={wp}u l={l}u
+M2 net_cp dn vss vss nmos w={wn}u l={l}u
+
+* Loop Filter (2nd order)
+R1 net_cp net_r {r_lf}
+C1 net_r vss {c1_lf}p
+C2 net_cp vss {c2_lf}p
+
+* VCO (voltage-controlled oscillator)
+* Kvco = {kvco} MHz/V, center freq = {f_center} MHz
+E_vco vco_out vss net_cp vss {kvco}
+
+.ends charge_pump_pll
+""",
+    parameters={
+        "wp": {"default": 10, "min": 2, "max": 100, "unit": "um"},
+        "wn": {"default": 5, "min": 1, "max": 50, "unit": "um"},
+        "l": {"default": 0.18, "min": 0.09, "max": 1, "unit": "um"},
+        "r_lf": {"default": 10e3, "min": 1e3, "max": 100e3, "unit": "ohm"},
+        "c1_lf": {"default": 10, "min": 1, "max": 100, "unit": "pF"},
+        "c2_lf": {"default": 1, "min": 0.1, "max": 10, "unit": "pF"},
+        "kvco": {"default": 100, "min": 10, "max": 1000, "unit": "MHz/V"},
+        "f_center": {"default": 1000, "min": 100, "max": 10000, "unit": "MHz"},
+    },
+    typical_specs={
+        "lock_time": {"typical": 10e-6, "unit": "s"},
+        "phase_noise": {"typical": -100, "unit": "dBc/Hz@1MHz"},
+        "jitter": {"typical": 5e-12, "unit": "s_rms"},
+    },
+    design_notes="Type-II PLL. C1/C2 ratio ~ 10 for stability. Loop BW ~ 1/10 of ref freq.",
+)
+
+FLASH_ADC = CircuitTemplate(
+    id="flash_adc_3bit",
+    name="3-bit Flash ADC",
+    category="analog",
+    description="3-bit flash ADC with resistor ladder and 7 comparators.",
+    netlist="""\
+.subckt flash_adc_3bit vin vref vdd vss d2 d1 d0
+* Resistor ladder (7 reference levels)
+R7 vref net6 {r_ladder}
+R6 net6 net5 {r_ladder}
+R5 net5 net4 {r_ladder}
+R4 net4 net3 {r_ladder}
+R3 net3 net2 {r_ladder}
+R2 net2 net1 {r_ladder}
+R1 net1 vss {r_ladder}
+
+* Comparators (simplified)
+* Each compares vin against a reference tap
+* Thermometer to binary encoder not shown
+.ends flash_adc_3bit
+""",
+    parameters={
+        "r_ladder": {"default": 1e3, "min": 100, "max": 10e3, "unit": "ohm"},
+    },
+    typical_specs={
+        "resolution": {"typical": 3, "unit": "bits"},
+        "sampling_rate": {"typical": 1e9, "unit": "Sa/s"},
+        "dnl": {"typical": 0.5, "unit": "LSB"},
+        "inl": {"typical": 0.5, "unit": "LSB"},
+    },
+    design_notes="Flash ADC trades area (2^N-1 comparators) for speed. 3-bit = 7 comparators.",
+)
+
+R2R_DAC = CircuitTemplate(
+    id="r2r_dac_4bit",
+    name="4-bit R-2R DAC",
+    category="analog",
+    description="4-bit R-2R ladder DAC for digital-to-analog conversion.",
+    netlist="""\
+.subckt r2r_dac_4bit d3 d2 d1 d0 vout vss
+* R-2R Ladder Network
+* MSB (d3) to LSB (d0)
+R_2r_d3 d3 net3 {r2}
+R_r_3 net3 net2 {r}
+R_2r_d2 d2 net2b {r2}
+R_j2 net2b net2 0
+R_r_2 net2 net1 {r}
+R_2r_d1 d1 net1b {r2}
+R_j1 net1b net1 0
+R_r_1 net1 net0 {r}
+R_2r_d0 d0 net0b {r2}
+R_j0 net0b net0 0
+R_term net0 vss {r2}
+
+* Output
+R_out net3 vout {r}
+.ends r2r_dac_4bit
+""",
+    parameters={
+        "r": {"default": 10e3, "min": 1e3, "max": 100e3, "unit": "ohm"},
+        "r2": {"default": 20e3, "min": 2e3, "max": 200e3, "unit": "ohm"},
+    },
+    typical_specs={
+        "resolution": {"typical": 4, "unit": "bits"},
+        "dnl": {"typical": 0.2, "unit": "LSB"},
+        "settling_time": {"typical": 100e-9, "unit": "s"},
+    },
+    design_notes="R-2R uses only 2 resistor values. DNL depends on matching. Good for moderate resolution.",
+)
+
+CG_LNA = CircuitTemplate(
+    id="cg_lna",
+    name="Common-Gate LNA",
+    category="analog",
+    description="Common-gate low-noise amplifier for RF front-end. Input matched to 50 ohm.",
+    netlist="""\
+.subckt cg_lna rf_in rf_out vdd vss
+* Input matching: Zin = 1/gm ~ 50 ohm
+* Bias
+Vb bias vss {vbias}
+M1 rf_out rf_in net_s vss nmos w={w}u l={l}u
+R_source net_s vss {r_source}
+
+* Load
+R_load vdd rf_out {r_load}
+
+* DC bias for input
+L_choke rf_in net_bias {l_choke}n
+R_bias net_bias bias {r_bias}
+
+* AC coupling
+C_in rf_in_ac rf_in {c_in}p
+C_out rf_out rf_out_ac {c_out}p
+.ends cg_lna
+""",
+    parameters={
+        "w": {"default": 50, "min": 10, "max": 200, "unit": "um"},
+        "l": {"default": 0.18, "min": 0.09, "max": 0.5, "unit": "um"},
+        "vbias": {"default": 0.7, "min": 0.5, "max": 1.0, "unit": "V"},
+        "r_load": {"default": 500, "min": 100, "max": 2000, "unit": "ohm"},
+        "r_source": {"default": 100, "min": 10, "max": 1000, "unit": "ohm"},
+        "r_bias": {"default": 10e3, "min": 1e3, "max": 100e3, "unit": "ohm"},
+        "l_choke": {"default": 10, "min": 1, "max": 100, "unit": "nH"},
+        "c_in": {"default": 1, "min": 0.1, "max": 10, "unit": "pF"},
+        "c_out": {"default": 1, "min": 0.1, "max": 10, "unit": "pF"},
+    },
+    typical_specs={
+        "gain": {"typical": 15, "unit": "dB"},
+        "nf": {"typical": 3.0, "unit": "dB"},
+        "s11": {"typical": -15, "unit": "dB"},
+        "iip3": {"typical": 5, "unit": "dBm"},
+    },
+    design_notes="CG LNA: wideband input match (Zin=1/gm). Higher NF than CS LNA but better linearity.",
+)
+
+
 TEMPLATES: dict[str, CircuitTemplate] = {
     t.id: t for t in [
         OTA_TWO_STAGE,
@@ -613,6 +774,10 @@ TEMPLATES: dict[str, CircuitTemplate] = {
         WIDLAR_CURRENT_SOURCE,
         CMOS_INVERTER,
         RC_FILTER,
+        CHARGE_PUMP_PLL,
+        FLASH_ADC,
+        R2R_DAC,
+        CG_LNA,
     ]
 }
 
