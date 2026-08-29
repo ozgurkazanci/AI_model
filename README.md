@@ -147,17 +147,17 @@ differential pair, ring oscillator, bandgap reference, current mirror.
 | Step | Task | Status |
 |------|------|--------|
 | 1 | Tool interface schema (frozen) | Done |
-| 2 | Eval set (54 tasks: 36 analog + 18 digital) | Done |
+| 2 | Eval set (78 tasks: 54 analog + 24 digital) | Done |
 | 3 | Corpus list + license audit | Done |
-| 4 | Baseline measurement | Done (mock) |
-| 5 | Adapter layer (ngspice/Verilator) | Done (mock) |
-| 6 | Agent loop + RL env | Done |
+| 4 | Baseline measurement | Done |
+| 5 | Adapter layer (ngspice DLL + Spectre WSL) | Done |
+| 6 | Agent loop + RL env (GRPO) | Done |
 | 7 | Synthetic perturbation pipeline | Done |
-| 8 | SFT data generation (393 examples, 15 tools) | Done |
-| 9 | Local fine-tuning (LoRA, CPU) | Done |
-| 10 | Real LLM validation + agent loop | Done |
-| 11 | Training: Cloud SFT → RL | Ready (needs GPU) |
-| 12 | Numerical optimizer integration | Done |
+| 8 | SFT data (1040 examples, 16 files, 15 tools) | Done |
+| 9 | Local fine-tuning (LoRA on 0.5B, CPU) | Done (loss 2.18->0.005) |
+| 10 | Model validation + benchmark | Done (3/5 val, 5/12 bench) |
+| 11 | Circuit templates (17 topologies) | Done |
+| 12 | Cloud 35B training | Ready (scripts/cloud/train_35b.sh) |
 
 ## For Claude Code Continuation
 

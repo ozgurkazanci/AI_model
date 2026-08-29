@@ -61,20 +61,30 @@ Results → back to LLM for next step
 | Adapter | Backend Key | Method | Status |
 |---------|-------------|--------|--------|
 | `ngspice_shared.py` | `ngspice_shared` | KiCad DLL via ctypes | **16 circuits verified** |
-| `spectre_wsl.py` | `spectre` | WSL subprocess | Binary found, needs license |
+| `spectre_wsl.py` | `spectre` | WSL subprocess | **24.1.0 binary working** (needs license) |
 | `mock.py` | `mock` | In-memory mock | Always available |
 
 ## Training Pipeline
 
 ```
-CPT (optional) → SFT (critical) → RL/GRPO (game-changer)
-                   ↑ 432 examples      ↑ script ready
+CPT (optional) → SFT (DONE!) → RL/GRPO (ready)
+                   ↑ 1040 examples    ↑ 100 episodes validated
+                   loss: 2.18 → 0.005
 ```
 
-### SFT Data (432 examples, 13 data files)
+### Training Results (0.5B local test)
+
+- **Loss**: 2.176 → 0.00462 (99.8% reduction)
+- **Duration**: 8h46m on CPU (267 steps, 3 epochs)
+- **Validation**: 3/5 pass (60%) — tool-calling learned!
+- **Benchmark**: 5/12 pass (47.2%)
+
+### SFT Data (1040 examples, 16 data files)
 
 | File | Examples | Domain |
 |------|----------|--------|
+| `batch_v1.jsonl` | 500 | 20 topologies (programmatic) |
+| `batch_v2.jsonl` | 100 | 20 topologies (programmatic) |
 | `mock_analog_v1.jsonl` | 108 | Analog simulation |
 | `augmented_v2.jsonl` | 90 | Augmented analog |
 | `diverse_tools_v1.jsonl` | 71 | 14 tools coverage |
@@ -83,31 +93,33 @@ CPT (optional) → SFT (critical) → RL/GRPO (game-changer)
 | `ngspice_real_v1.jsonl` | 8 | Real ngspice results |
 | `ngspice_real_v2.jsonl` | 8 | Real ngspice results |
 | `pdk.get_corners` | 10 | PDK corner data |
+| `mixedsignal_v1.jsonl` | 8 | PLL/ADC/DAC/LNA/VCO |
 | `spectre_format_v1.jsonl` | 6 | Spectre .scs format |
 | `reasoning_v1.jsonl` | 5 | Multi-step reasoning |
 | `digital_rtl_v1.jsonl` | 4 | Verilog/SV RTL |
 | `signoff_v1.jsonl` | 4 | DRC/LVS/extraction |
 | `layout_v1.jsonl` | 4 | Layout/floorplanning |
 
-**Train/Val split**: 389 train + 43 val (curriculum ordered: easy→hard)
+**Train/Val split**: 936 train + 104 val (curriculum ordered: easy->hard)
 
 ### Fine-Tuning
 
 ```bash
-# Quick test (15 min CPU)
-PYTHONPATH=src python scripts/finetune_local.py --quick-test
-
-# Full local (8-10 hours CPU)
+# Local 0.5B (8-10 hours CPU) — COMPLETED
 PYTHONPATH=src python scripts/finetune_local.py --epochs 3
 
-# Cloud (8 hours A100)
-bash scripts/cloud/deploy_and_train.sh
+# Cloud 35B (8-12 hours A100, ~$14)
+bash scripts/cloud/train_35b.sh
+
+# Validate trained model
+PYTHONPATH=src python scripts/validate_trained_model.py --model outputs/sft_local/final
+PYTHONPATH=src python scripts/benchmark_model.py --model outputs/sft_local/final
 ```
 
-### RL/GRPO (Ready)
+### RL/GRPO (Validated)
 
 ```bash
-# GRPO with real ngspice rewards
+# GRPO with real ngspice rewards (100 episodes validated)
 PYTHONPATH=src python scripts/grpo_ngspice.py --episodes 100
 
 # RL environment demo
