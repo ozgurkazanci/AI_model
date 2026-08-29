@@ -254,10 +254,11 @@ def main():
     parser = argparse.ArgumentParser(description="Batch SFT Data Generator")
     parser.add_argument("--count", type=int, default=500, help="Number of examples")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    parser.add_argument("--output", default="data/sft/batch_v1.jsonl", help="Output file")
     args = parser.parse_args()
 
     random.seed(args.seed)
-    output_path = "data/sft/batch_v1.jsonl"
+    output_path = args.output
 
     print(f"\n{SEP}")
     print(f"   Batch SFT Data Generator ({args.count} examples)")
