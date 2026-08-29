@@ -13,7 +13,7 @@ pip install -r requirements.txt
 
 # Run tests (must pass)
 PYTHONPATH=src python -m pytest tests/ -v --tb=short
-# Expected: 187 passed, 0 skipped
+# Expected: 242 passed, 0 skipped
 
 # Run full pipeline demo
 PYTHONPATH=src python scripts/demo_full_pipeline.py
@@ -180,7 +180,7 @@ PYTHONPATH=src python scripts/demo_rl_ngspice.py
 ## Project Stats
 
 ```
-v0.3.0 | 55 commits | 187 tests | 0 skip
+v0.3.0 | 55 commits | 242 tests | 0 skip
 432 SFT examples | 74 eval tasks (50 analog + 24 digital)
 13 templates | 16 ngspice circuits | 3 adapters
 ~40 scripts | ~47 modules | ~17,000 lines

@@ -88,7 +88,7 @@ variant across the corpus, contract-only tool names, and no module referencing
 ## Project Commands
 
 ```bash
-PYTHONPATH=src python -m pytest tests/ -v          # Run tests (187 passed)
+PYTHONPATH=src python -m pytest tests/ -v          # Run tests (242 passed)
 PYTHONPATH=src python scripts/project_stats.py     # Show stats
 PYTHONPATH=src python scripts/demo_ai_ngspice.py   # E2E AI+ngspice demo
 PYTHONPATH=src python scripts/demo_rl_ngspice.py   # RL env + ngspice
@@ -103,7 +103,7 @@ PYTHONPATH=src python scripts/chat.py --model outputs/sft_local/final  # Chat
 
 - Source: `src/asic_ai/` (47 modules)
 - Scripts: `scripts/` (44 CLI tools)
-- Tests: `tests/` (17 files, 187 passed)
+- Tests: `tests/` (17 files, 242 passed)
 - Eval: `eval/tasks/` (74 tasks: 50 analog + 24 digital)
 - Data: `data/sft/` (15 files, 1032 total: 929 train + 103 val)
 - Configs: `configs/eda_tools.yaml`, `configs/training_profiles.yaml`
