@@ -67,14 +67,13 @@
 ## Project Commands
 
 ```bash
-PYTHONPATH=src python -m pytest tests/ -v          # Run tests (175 passed)
+PYTHONPATH=src python -m pytest tests/ -v          # Run tests (187 passed)
 PYTHONPATH=src python scripts/project_stats.py     # Show stats
 PYTHONPATH=src python scripts/demo_ai_ngspice.py   # E2E AI+ngspice demo
 PYTHONPATH=src python scripts/demo_rl_ngspice.py   # RL env + ngspice
-PYTHONPATH=src python scripts/agent_ngspice.py     # Agent with real sim
-PYTHONPATH=src python scripts/verify_templates_ngspice.py  # Template verification
+PYTHONPATH=src python scripts/grpo_ngspice.py      # GRPO with ngspice rewards
+PYTHONPATH=src python scripts/benchmark_model.py   # 12-prompt benchmark
 PYTHONPATH=src python scripts/post_training_pipeline.py    # Post-train automation
-PYTHONPATH=src python scripts/training_monitor.py  # Check training
 PYTHONPATH=src python scripts/validate_trained_model.py    # Post-train validation
 PYTHONPATH=src python scripts/chat.py --model outputs/sft_local/final  # Chat
 ```
@@ -82,12 +81,12 @@ PYTHONPATH=src python scripts/chat.py --model outputs/sft_local/final  # Chat
 ## File Organization
 
 - Source: `src/asic_ai/` (47 modules)
-- Scripts: `scripts/` (37 CLI tools)
-- Tests: `tests/` (16 files, 175 passed)
+- Scripts: `scripts/` (44 CLI tools)
+- Tests: `tests/` (17 files, 187 passed)
 - Eval: `eval/tasks/` (74 tasks: 50 analog + 24 digital)
-- Data: `data/sft/` (train_final.jsonl = 378 train + 42 val = 420 total)
+- Data: `data/sft/` (15 files, 1032 total: 929 train + 103 val)
 - Configs: `configs/eda_tools.yaml`, `configs/training_profiles.yaml`
-- Cloud: `scripts/cloud/deploy_and_train.sh` (one-command deploy)
+- Cloud: `scripts/cloud/train_35b.sh` (35B training)
 - Docs: `docs/HANDOFF.md` is the comprehensive guide
-- Adapters: ngspice_shared (DLL), spectre_wsl (WSL), mock (test)
+- Adapters: ngspice_shared (DLL), spectre_wsl (WSL, 24.1.0), mock (test)
 
