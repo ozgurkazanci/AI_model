@@ -152,3 +152,43 @@ ngspice:
   description: "ngspice open-source SPICE simulator"
   adapter: "ngspice_shared"
   status: "WORKING (16 circuits verified)"
+
+# ============================================================
+# PDK (Process Design Kits)
+# ============================================================
+pdk:
+  tsmc65:
+    name: "TSMC 65nm CRN65GPLUS"
+    node: "65nm"
+    model: "BSIM4 v4.5"
+    supply: "1.0V core / 2.5V IO / 3.3V IO"
+    metal_layers: 9
+    variants: ["GP", "LP"]
+    pdk_root: "/opt/eda/PDK/CRN65GPNEW/CRN65GPNEW"
+    wsl_path: "\\\\wsl.localhost\\Alma_EDA\\opt\\eda\\PDK\\CRN65GPNEW"
+    models_spectre: "/opt/eda/PDK/CRN65GPNEW/CRN65GPNEW/models/spectre"
+    models_hspice: "/opt/eda/PDK/CRN65GPNEW/CRN65GPNEW/models/hspice"
+    corner_file: "crn65gplus_2d5_lk_v1d0.scs"
+    corners: [tt, ss, ff, sf, fs]
+    devices:
+      nmos: "nch (SVT), nch_lvt, nch_hvt, nch_25, nch_na"
+      pmos: "pch (SVT), pch_lvt, pch_hvt, pch_25"
+      rf: "nmos_rf, pmos_rf, spiral_*, xjvar"
+      passive: "rppoly, mimcap, nmoscap"
+    verification:
+      drc: "Calibre"
+      lvs: "Calibre"
+      extraction: "Assura"
+    libraries:
+      - "/opt/eda/PDK/65/CMOS/GP/stclib"  # Standard cell GP
+      - "/opt/eda/PDK/65/CMOS/LP/stclib"  # Standard cell LP
+      - "/opt/eda/PDK/65/iolib"            # I/O library
+
+  tsmc65_alt:
+    name: "TSMC 65nm (alternate)"
+    pdk_root: "/opt/eda/PDK/65"
+    wsl_path: "\\\\wsl.localhost\\Alma_EDA\\opt\\eda\\PDK\\65"
+    gp_pdk: "/opt/eda/PDK/65/CMOS/GP/pdk"
+    lp_pdk: "/opt/eda/PDK/65/CMOS/LP/pdk"
+    docs: "/opt/eda/PDK/65/doc"
+

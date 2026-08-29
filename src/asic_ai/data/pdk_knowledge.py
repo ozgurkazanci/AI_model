@@ -125,12 +125,152 @@ GF180MCU_PARAMS = {
     },
 }
 
+# TSMC 65nm CRN65GPLUS PDK (real Cadence PDK on WSL)
+TSMC65_PARAMS = {
+    "process_name": "tsmc65",
+    "foundry": "TSMC",
+    "node": "65nm",
+    "pdk_id": "CRN65GPLUS",
+    "model_type": "BSIM4 v4.5",
+    "supply_voltage": 1.0,
+    "supply_voltages": {"core": 1.0, "io_25": 2.5, "io_33": 3.3},
+    "metal_layers": 9,  # up to m9 (thick top metal)
+    "variants": ["GP", "LP"],  # General Purpose, Low Power
+
+    # WSL paths (Alma_EDA)
+    "wsl_paths": {
+        "pdk_root": "/opt/eda/PDK/CRN65GPNEW/CRN65GPNEW",
+        "models_spectre": "/opt/eda/PDK/CRN65GPNEW/CRN65GPNEW/models/spectre",
+        "models_hspice": "/opt/eda/PDK/CRN65GPNEW/CRN65GPNEW/models/hspice",
+        "techfile": "/opt/eda/PDK/CRN65GPNEW/CRN65GPNEW/techfile",
+        "calibre": "/opt/eda/PDK/CRN65GPNEW/CRN65GPNEW/Calibre",
+        "assura": "/opt/eda/PDK/CRN65GPNEW/CRN65GPNEW/Assura",
+        "cds_lib": "/opt/eda/PDK/CRN65GPNEW/CRN65GPNEW/cds.lib",
+        "alt_pdk": "/opt/eda/PDK/65/CMOS/GP/pdk",
+        "alt_lp_pdk": "/opt/eda/PDK/65/CMOS/LP/pdk",
+        "stclib_gp": "/opt/eda/PDK/65/CMOS/GP/stclib",
+        "stclib_lp": "/opt/eda/PDK/65/CMOS/LP/stclib",
+        "iolib": "/opt/eda/PDK/65/iolib",
+    },
+
+    # Spectre model include
+    "spectre_model_file": "crn65gplus_2d5_lk_v1d0.scs",
+    "spectre_corner_files": {
+        "core": "cor_18.scs",       # 1.0V core (section tt_18, ss_18, ff_18, sf_18, fs_18)
+        "io_25": "cor_25.scs",      # 2.5V I/O
+        "io_33": "cor_33.scs",      # 3.3V I/O
+        "hvt": "cor_hvt.scs",       # High-Vt
+        "lvt": "cor_lvt.scs",       # Low-Vt
+        "std_mos": "cor_std_mos.scs",
+        "res": "cor_res.scs",
+        "mim": "cor_mim.scs",
+        "dio": "cor_dio_18.scs",
+        "bip": "cor_bip_npn.scs",
+        "rfmos": "cor_rfmos.scs",
+        "rfind": "cor_rfind.scs",
+        "rfmim": "cor_rfmim.scs",
+    },
+
+    # NMOS core 1.0V (nch)
+    "nmos": {
+        "model": "nch",
+        "vth0": 0.42,  # V (typical, SVT)
+        "vth0_range": (0.36, 0.48),  # (ff, ss)
+        "kp": 350e-6,  # A/V^2
+        "mu_n": 400,  # cm^2/Vs
+        "w_min": 0.12e-6,
+        "l_min": 0.06e-6,
+        "avt": 3.5e-3,  # V*um
+        "abeta": 0.6,  # %*um
+    },
+
+    # PMOS core 1.0V (pch)
+    "pmos": {
+        "model": "pch",
+        "vth0": -0.39,  # V (typical, SVT)
+        "vth0_range": (-0.45, -0.33),
+        "kp": 120e-6,  # A/V^2
+        "mu_p": 100,  # cm^2/Vs
+        "w_min": 0.12e-6,
+        "l_min": 0.06e-6,
+        "avt": 4.5e-3,
+        "abeta": 0.8,
+    },
+
+    # Threshold variants
+    "nmos_hvt": {"model": "nch_hvt", "vth0": 0.55},
+    "nmos_lvt": {"model": "nch_lvt", "vth0": 0.32},
+    "pmos_hvt": {"model": "pch_hvt", "vth0": -0.52},
+    "pmos_lvt": {"model": "pch_lvt", "vth0": -0.30},
+
+    # I/O devices
+    "nmos_25": {"model": "nch_25", "vth0": 0.55, "vdd": 2.5},
+    "pmos_25": {"model": "pch_25", "vth0": -0.55, "vdd": 2.5},
+
+    # RF devices
+    "rf_devices": {
+        "nmos_rf": "nmos_rf",
+        "pmos_rf": "pmos_rf",
+        "nmos_rf_25": "nmos_rf_25",
+    },
+
+    # Passive devices
+    "resistors": {
+        "rpoly": {"model": "rppoly", "sheet_r": 7.8, "unit": "ohm/sq"},
+        "rpoly_wo": {"model": "rppolywo", "sheet_r": 325, "unit": "ohm/sq"},
+        "rnpoly": {"model": "rnpoly", "sheet_r": 7.8, "unit": "ohm/sq"},
+        "rnwell": {"model": "rnwsti", "sheet_r": 600, "unit": "ohm/sq"},
+        "rnod": {"model": "rnod", "sheet_r": 85, "unit": "ohm/sq"},
+        "rpod": {"model": "rpod", "sheet_r": 150, "unit": "ohm/sq"},
+    },
+    "capacitors": {
+        "mim": {"model": "mimcap_um_rf", "density": 2.0, "unit": "fF/um^2"},
+        "mim_udc": {"model": "mimcap_udc", "density": 1.0, "unit": "fF/um^2"},
+        "moscap": {"model": "nmoscap", "density": 10.0, "unit": "fF/um^2"},
+        "moscap_rf": {"model": "moscap_rf", "density": 10.0, "unit": "fF/um^2"},
+    },
+    "inductors": {
+        "spiral_std": "spiral_std_mu_z",
+        "spiral_sym": "spiral_sym_ct_mu_z",
+    },
+    "varactors": {
+        "mosvar": "xjvar",
+        "mosvar_nw": "xjvar_nw",
+    },
+
+    # Corners
+    "corners": {
+        "tt": {"process": "typical", "voltage": 1.0, "temperature": 27, "section": "tt_18"},
+        "ss": {"process": "slow", "voltage": 0.9, "temperature": -40, "section": "ss_18"},
+        "ff": {"process": "fast", "voltage": 1.1, "temperature": 125, "section": "ff_18"},
+        "sf": {"process": "slow_n_fast_p", "voltage": 1.0, "temperature": 27, "section": "sf_18"},
+        "fs": {"process": "fast_n_slow_p", "voltage": 1.0, "temperature": 27, "section": "fs_18"},
+    },
+
+    # Design rules
+    "design_rules": {
+        "poly_width_min": 0.06e-6,
+        "poly_spacing_min": 0.14e-6,
+        "metal1_width_min": 0.09e-6,
+        "metal1_spacing_min": 0.09e-6,
+        "via1_size": 0.09e-6,
+    },
+
+    # Verification tools
+    "drc_deck": "Calibre",
+    "lvs_deck": "Calibre",
+    "extraction": "Assura",
+}
+
 
 def get_pdk_params(pdk_name: str) -> dict:
     """Get PDK parameters by name."""
     pdks = {
         "sky130": SKY130_PARAMS,
         "gf180mcu": GF180MCU_PARAMS,
+        "tsmc65": TSMC65_PARAMS,
+        "tsmc65gp": TSMC65_PARAMS,  # alias
+        "crn65gp": TSMC65_PARAMS,   # alias
     }
     if pdk_name not in pdks:
         raise KeyError(f"Unknown PDK: {pdk_name}. Available: {list(pdks.keys())}")
