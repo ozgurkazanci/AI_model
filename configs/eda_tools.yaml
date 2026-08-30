@@ -226,10 +226,13 @@ pdk:
       nominal_instance_params:
         sigma: "0"
       supply_voltage: 1.0
+      # SIGN-OFF CONVENTION: SS = slow / LOW supply / HOT (125 C),
+      # FF = fast / HIGH supply / COLD (-40 C). Every axis of a corner must
+      # push the same way, or the corner spread cancels against itself.
       corner_pvt:
         tt: {voltage: 1.0, temperature: 27.0}
-        ss: {voltage: 0.9, temperature: -40.0}
-        ff: {voltage: 1.1, temperature: 125.0}
+        ss: {voltage: 0.9, temperature: 125.0}
+        ff: {voltage: 1.1, temperature: -40.0}
         sf: {voltage: 1.0, temperature: 27.0}
         fs: {voltage: 1.0, temperature: 27.0}
       # Instantiable SUBCIRCUIT names (X instances). The bare .model

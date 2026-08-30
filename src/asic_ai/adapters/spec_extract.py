@@ -46,11 +46,14 @@ Usage:
 """
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping, Optional, Sequence
 
 from asic_ai.adapters import measure
+
+log = logging.getLogger(__name__)
 
 __all__ = [
     "SpecExtraction",
@@ -72,15 +75,26 @@ __all__ = [
 
 ALIASES: dict[str, str] = {
     # -- small-signal gain ---------------------------------------------------
-    "gain": "dc_gain_db",
+    # "dc_gain" means the gain AT DC and maps to dc_gain_db, which measure.py
+    # produces only when the sweep demonstrably reaches DC. Every other gain
+    # spelling means "the gain of this amplifier", which for an AC-coupled or
+    # band-pass stage is the MID-BAND gain, not whatever the response happens
+    # to be at f_start. Those map to passband_gain_db, which is the DC gain
+    # when the sweep reaches DC and the peak gain otherwise. Before this split
+    # an AC-coupled stage with 40 dB of mid-band gain reported -24 dB.
+    "gain": "passband_gain_db",
     "dc_gain": "dc_gain_db",
-    "gain_db": "dc_gain_db",
-    "conversion_gain": "dc_gain_db",
-    "gain_max": "dc_gain_db",
-    "gain_min": "dc_gain_db",
-    "linearity": "dc_gain_db",
+    "gain_db": "passband_gain_db",
+    "conversion_gain": "passband_gain_db",
+    "gain_max": "passband_gain_db",
+    "gain_min": "passband_gain_db",
+    "linearity": "passband_gain_db",
 
     # -- bandwidth / frequency ----------------------------------------------
+    # bandwidth_3db is the UPPER -3 dB edge in Hz, referenced to the passband
+    # gain (see measure.ac_metrics). For a band-pass response the low-side edge
+    # is reported separately as f_3db_lo and the -3 dB SPAN is the difference;
+    # ac_metrics["notes"]["bandwidth_3db"] spells that out per measurement.
     "ugb": "ugb",
     "gbw": "ugb",
     "bw": "bandwidth_3db",
@@ -125,6 +139,7 @@ ALIASES: dict[str, str] = {
 # Canonical metric -> physical dimension, used to pick the unit conversion.
 DIMENSIONS: dict[str, str] = {
     "dc_gain_db": "gain",
+    "passband_gain_db": "gain",
     "ugb": "frequency",
     "bandwidth_3db": "frequency",
     "phase_margin": "angle",
@@ -219,20 +234,34 @@ def _signal_xy(sig: Any) -> tuple[list[float], list[float]]:
 
 
 def _pick_output(signals: Mapping[str, Any], preferred: Optional[str],
-                 prefix: str = "") -> Optional[str]:
+                 prefix: str = "", suffix: str = "") -> Optional[str]:
     """Choose the output signal key, preferring an explicit name.
+
+    AC signals are keyed "vdb(<vector>)" / "vp(<vector>)", so callers pass
+    prefix="vdb(" AND suffix=")". Omitting the suffix builds "vdb(out", which is
+    never a key -- both the caller's explicit choice and the out/vout/output
+    fallback then miss, and selection silently degrades to "whatever vector
+    ngspice happened to list first". That is right by luck on a testbench whose
+    output is the first vector, which is exactly why it went unnoticed.
 
     Falls back to a node literally called 'out', then to the first key that is
     not a branch current, so a bare testbench still works without configuration.
     """
     if not signals:
         return None
+
+    def _key(name: str) -> str:
+        return f"{prefix}{name}{suffix}" if (prefix or suffix) else name
+
     if preferred:
-        key = f"{prefix}{preferred}" if prefix else preferred
+        key = _key(preferred)
         if key in signals:
             return key
+        # The caller may already have passed a fully-formed key.
+        if preferred in signals:
+            return preferred
     for cand in ("out", "vout", "output"):
-        key = f"{prefix}{cand}" if prefix else cand
+        key = _key(cand)
         if key in signals:
             return key
     for key in signals:
@@ -247,9 +276,18 @@ def _pick_output(signals: Mapping[str, Any], preferred: Optional[str],
 
 def _compute_metrics(dc: Any, ac: Any, tran: Any, noise: Any, stb: Any,
                      output_signal: Optional[str],
-                     supply_sources: Optional[Sequence[str]]) -> dict[str, float]:
-    """Every canonical metric the supplied results support, in SI units."""
+                     supply_sources: Optional[Sequence[str]],
+                     netlist: Optional[str] = None,
+                     unmeasurable: Optional[dict[str, str]] = None
+                     ) -> dict[str, float]:
+    """Every canonical metric the supplied results support, in SI units.
+
+    `unmeasurable`, when given, collects the CANONICAL metric names that the
+    measurement layer explicitly refused, keyed to the reason it gave. Those
+    reasons are far more useful than "not produced by the supplied results".
+    """
     m: dict[str, float] = {}
+    why: dict[str, str] = {} if unmeasurable is None else unmeasurable
 
     def put(name: str, value: Optional[float]) -> None:
         if value is None:
@@ -264,18 +302,23 @@ def _compute_metrics(dc: Any, ac: Any, tran: Any, noise: Any, stb: Any,
     if acd:
         freqs = list(acd.get("frequencies") or [])
         signals = acd.get("signals") or {}
-        key = _pick_output(signals, output_signal, prefix="vdb(")
+        key = _pick_output(signals, output_signal, prefix="vdb(", suffix=")")
         if key and key.startswith("vdb("):
             _, gain_db = _signal_xy(signals[key])
             raw = key[4:-1]
             ph_sig = signals.get(f"vp({raw})")
             phase = _signal_xy(ph_sig)[1] if ph_sig else None
             am = measure.ac_metrics(freqs, gain_db, phase)
-            put("dc_gain_db", am.get("dc_gain_db"))
-            put("ugb", am.get("ugb"))
-            put("bandwidth_3db", am.get("bandwidth_3db"))
-            put("phase_margin", am.get("phase_margin"))
-            put("gain_margin", am.get("gain_margin"))
+            for metric in ("dc_gain_db", "passband_gain_db", "ugb",
+                           "bandwidth_3db", "phase_margin", "gain_margin"):
+                put(metric, am.get(metric))
+            # ac_metrics explains every None it returns. Carry the explanation
+            # across rather than replacing it with a generic "not produced".
+            notes = am.get("notes") or {}
+            for metric, note in notes.items():
+                if metric in ("dc_gain_db", "bandwidth_3db", "ugb",
+                              "phase_margin", "gain_margin"):
+                    why[metric] = note
 
     # -- stability overrides AC for margins, it is the purpose-built analysis -
     stbd = _as_dict(stb)
@@ -288,8 +331,14 @@ def _compute_metrics(dc: Any, ac: Any, tran: Any, noise: Any, stb: Any,
     if dcd:
         op = dcd.get("op_points") or {}
         if op:
-            put("idd", measure.supply_current(
-                op, list(supply_sources) if supply_sources else None))
+            idd = measure.supply_current_report(
+                op, list(supply_sources) if supply_sources else None, netlist)
+            put("idd", idd.value)
+            if idd.value is None and idd.warnings:
+                why["idd"] = "; ".join(idd.warnings)
+            elif idd.warnings:
+                log.warning("idd may not be the supply current: %s",
+                            "; ".join(idd.warnings))
             node = output_signal or "out"
             for cand in (node, "out", "vout"):
                 if cand in op:
@@ -382,7 +431,8 @@ def extract_specs(specs: Mapping[str, Any],
                   noise: Any = None,
                   stb: Any = None,
                   output_signal: Optional[str] = None,
-                  supply_sources: Optional[Iterable[str]] = None) -> SpecExtraction:
+                  supply_sources: Optional[Iterable[str]] = None,
+                  netlist: Optional[str] = None) -> SpecExtraction:
     """Measure a task's specs from simulation results.
 
     Args:
@@ -393,13 +443,20 @@ def extract_specs(specs: Mapping[str, Any],
             omitted, a node called 'out' is preferred, else the first
             non-branch-current signal.
         supply_sources: voltage source names to sum for idd. Defaults to every
-            'v*#branch' entry.
+            independent-voltage-source branch, which is a guess -- see
+            measure.supply_current_report.
+        netlist: the deck that produced these results. Pass it whenever you
+            have it: it is the only way to tell a 0 V sense source from a
+            supply rail, and the only way to notice that the block is biased
+            by a current source whose branch current ngspice never reports.
 
     Returns:
         SpecExtraction. `values` holds only specs that were genuinely measured.
     """
+    refusals: dict[str, str] = {}
     si = _compute_metrics(dc, ac, tran, noise, stb, output_signal,
-                          list(supply_sources) if supply_sources else None)
+                          list(supply_sources) if supply_sources else None,
+                          netlist, refusals)
 
     out = SpecExtraction(metrics_si=si)
 
@@ -423,7 +480,10 @@ def extract_specs(specs: Mapping[str, Any],
             continue
 
         if metric not in si:
+            refused = refusals.get(metric)
             out.unmeasurable[name] = (
+                f"metric {metric!r} was refused by the measurement: {refused}"
+                if refused else
                 f"metric {metric!r} was not produced by the supplied results "
                 f"(need the matching analysis, and a resolvable output signal)"
             )

@@ -119,8 +119,18 @@ _ERROR_LINE_RE = re.compile(r"error on line\s+(\d+)", re.IGNORECASE)
 # and no PDK is configured. Same convention as data/pdk_knowledge.py. Voltage
 # stays unspecified (0.0) because a bare corner name genuinely says nothing
 # about the supply, and forcing one would corrupt an IO-voltage netlist.
+#
+# SIGN-OFF CONVENTION: a corner is the WORST CASE of one thing, so every axis
+# must push the same way.
+#   SS = slow silicon + LOW supply  + HOT  (125 C): slowest, least drive.
+#   FF = fast silicon + HIGH supply + COLD (-40 C): fastest, most drive, worst
+#        leakage-free overdrive and worst hold time.
+# These temperatures used to be the other way round, which cancelled part of
+# the corner spread against itself: SS ran slow-process/low-VDD at the cold
+# (fast) temperature and FF ran fast-process/high-VDD at the hot (slow) one, so
+# the reported corner-to-corner spread understated the real one.
 _GENERIC_CORNER_TEMPS = {
-    "tt": 27.0, "ss": -40.0, "ff": 125.0, "sf": 27.0, "fs": 27.0,
+    "tt": 27.0, "ss": 125.0, "ff": -40.0, "sf": 27.0, "fs": 27.0,
 }
 
 
@@ -396,6 +406,34 @@ class _SimRun:
         return self.plots.get(plot, {})
 
 
+# ngspice names the vector it swept "<kind>-sweep" and puts it LAST in the
+# ngSpice_AllVecs list. Verified against the KiCad 10 DLL:
+#
+#   .dc v1 0 1.8 0.45   -> ['v1#branch','b','a','vdd','v-sweep']   v_type 3
+#   .dc i1 0 1m 0.25m   -> ['out','i-sweep']                       v_type 4
+#   .dc temp -40 120 40 -> ['v1#branch','out','vdd','temp-sweep']  v_type 14
+#   .dc r2 5k 20k 5k    -> ['v1#branch','out','vdd','res-sweep']   v_type 15
+#
+# Only "v-sweep" used to be recognised, and the fallback picked the LONGEST
+# vector -- but in a DC sweep every vector has the same length, so max() just
+# returned whichever key ngspice happened to list first. That silently put a
+# branch current in AMPERES on the x axis of a temperature sweep, and
+# transposed a current sweep completely. There is no length heuristic that can
+# work here; the designated name is the only signal there is.
+_DC_SWEEP_NAMES = ("v-sweep", "i-sweep", "temp-sweep", "res-sweep")
+
+
+def _dc_sweep_axis(vecs: dict[str, list]) -> Optional[str]:
+    """Name of the vector ngspice designated as the DC sweep axis, or None."""
+    for name in _DC_SWEEP_NAMES:
+        if name in vecs:
+            return name
+    for name in vecs:
+        if name.lower().endswith("-sweep"):
+            return name
+    return None
+
+
 def _real(values: Sequence) -> list[float]:
     """Real projection of a vector that may be real or complex."""
     out: list[float] = []
@@ -595,6 +633,7 @@ class NgspiceSharedAdapter(SimulatorAdapter):
                  corner: str = "tt"):
         super().__init__(config)
         self._output: list[str] = []
+        self._last_netlist: str = ""
 
         dll_path = config.binary_path
         if not dll_path or not Path(dll_path).exists():
@@ -762,6 +801,10 @@ class NgspiceSharedAdapter(SimulatorAdapter):
         if fatal or not new_plots or cur in (None, "", "const"):
             raise NgspiceError(self._failure_message(fatal, cur, new_plots, pdk))
 
+        # Remembered so measure_idd can tell a 0 V sense source from a rail.
+        # Only ever applied to a result whose element names still match it.
+        self._last_netlist = netlist
+
         run = _SimRun(plot_order=list(new_plots), console=console,
                       warnings=warns, netlist=netlist)
         for plot in new_plots:
@@ -840,21 +883,21 @@ class NgspiceSharedAdapter(SimulatorAdapter):
         sweeps: dict[str, SignalData] = {}
         vecs = run.vectors(dc_plot)
         if vecs:
-            if "v-sweep" in vecs:
-                x_name = "v-sweep"
+            x_name = _dc_sweep_axis(vecs)
+            if x_name is None:
+                log.warning(
+                    "DC plot has no '*-sweep' vector, so ngspice designated no "
+                    "sweep axis; sweeps are dropped rather than plotted against "
+                    "a guessed axis (vectors: %s)", sorted(vecs),
+                )
             else:
-                # Fall back to the longest vector so the axis is at least real
-                # data rather than an invented index range.
-                x_name = max(vecs, key=lambda k: len(vecs[k]))
-            x_values = _real(vecs[x_name])
-            for name, data in vecs.items():
-                if name == x_name or len(data) != len(x_values):
-                    continue
-                y_values = _real(data)
-                if y_values == x_values:
-                    continue  # exact duplicate of the swept variable
-                sweeps[name] = SignalData(name=name, x_values=list(x_values),
-                                          y_values=y_values)
+                x_values = _real(vecs[x_name])
+                for name, data in vecs.items():
+                    if name == x_name or len(data) != len(x_values):
+                        continue
+                    sweeps[name] = SignalData(name=name,
+                                              x_values=list(x_values),
+                                              y_values=_real(data))
         if not op_points and not sweeps:
             return None
         return DCResult(op_points=op_points, sweeps=sweeps)
@@ -1032,10 +1075,18 @@ class NgspiceSharedAdapter(SimulatorAdapter):
         m = measure.ac_metrics(freqs, gain_db, phase_deg)
 
         if m["phase_margin"] is None:
-            raise NgspiceError(
-                "stb(): loop gain never crosses 0 dB, so the phase margin is "
-                f"undefined (max gain {max(gain_db):.2f} dB)."
-            )
+            # Say what is ACTUALLY wrong. The old message claimed "never
+            # crosses 0 dB" even for a loop whose peak gain was 40 dB, because
+            # the ugb guard was keyed on the gain at the bottom of the sweep
+            # instead of on the peak.
+            notes = m["notes"]
+            reason = (notes.get("phase_margin") or notes.get("ugb")
+                      or notes.get("*")
+                      or "the phase is not defined at the unity-gain frequency")
+            peak, f_peak = m["peak_gain_db"], m["f_peak"]
+            detail = (f" (peak loop gain {peak:.2f} dB at {f_peak:g} Hz)"
+                      if peak is not None and f_peak is not None else "")
+            raise NgspiceError(f"stb(): no phase margin. {reason}{detail}.")
         gm = m["gain_margin"]
         return StabilityResult(
             phase_margin=float(m["phase_margin"]),
@@ -1185,11 +1236,16 @@ class NgspiceSharedAdapter(SimulatorAdapter):
     # -- measurement convenience ------------------------------------------
 
     @staticmethod
-    def measure_ac(result: ACResult, signal: str = "out") -> dict[str, Optional[float]]:
+    def measure_ac(result: ACResult, signal: str = "out") -> dict[str, Any]:
         """dc_gain_db / bandwidth_3db / ugb / phase_margin / gain_margin.
 
         `signal` is a raw vector name such as 'out'; the vdb()/vp() keys are
         looked up for you.
+
+        See measure.ac_metrics for the full key list. Anything the response
+        does not define comes back as None with the reason under "notes" --
+        including dc_gain_db, which is None whenever the sweep does not
+        actually reach DC. Read notes before treating a None as a failure.
         """
         mag = result.signals.get(f"vdb({signal})")
         if mag is None:
@@ -1202,7 +1258,7 @@ class NgspiceSharedAdapter(SimulatorAdapter):
                                   ph.y_values if ph else None)
 
     @staticmethod
-    def measure_tran(result: TranResult, signal: str = "out") -> dict[str, Optional[float]]:
+    def measure_tran(result: TranResult, signal: str = "out") -> dict[str, Any]:
         """rise_time / fall_time / overshoot / settling_time / slew_rate."""
         sig = result.signals.get(signal)
         if sig is None:
@@ -1211,15 +1267,51 @@ class NgspiceSharedAdapter(SimulatorAdapter):
             )
         return measure.tran_metrics(result.time, sig.y_values)
 
-    @staticmethod
-    def measure_idd(result: DCResult,
-                    sources: Optional[Iterable[str]] = None) -> Optional[float]:
+    def measure_idd(self, result: DCResult,
+                    sources: Optional[Iterable[str]] = None,
+                    netlist: Optional[str] = None) -> Optional[float]:
         """Total supply current magnitude in amperes, or None when unavailable.
 
         ngspice reports a source branch current with the passive sign
         convention, so a 1.8 V supply feeding 20 kOhm reports -90 uA. This
         returns the magnitude, 90e-6.
+
+        Which sources are SUPPLIES is not knowable from an operating point: a
+        0 V ammeter is spelled exactly like a rail, and a current-source-biased
+        block has no supply branch vector at all. So the deck is consulted --
+        `netlist` when given, otherwise the deck of the last run, and only when
+        its element names still match this result, so a stale netlist from a
+        later run can never be applied to an earlier one. Name the supplies via
+        `sources` whenever you know them; that always wins.
+
+        Returns None, with the reason logged, when the supply cannot be
+        identified. That is deliberate: this call used to report a 1 uA sense
+        source as the supply current of a 1 mA stage, silently.
         """
         return measure.supply_current(
-            result.op_points, list(sources) if sources else None
+            result.op_points,
+            list(sources) if sources else None,
+            netlist if netlist is not None else self._netlist_for(result),
         )
+
+    def _netlist_for(self, result: DCResult) -> Optional[str]:
+        """The last run's deck, but only if it really produced `result`.
+
+        Matched on element names: every '<name>#branch' in the operating point
+        must be an element card in that deck. A result carried over from an
+        earlier, different circuit fails this and gets no netlist rather than
+        the wrong one.
+        """
+        netlist = getattr(self, "_last_netlist", "") or ""
+        if not netlist:
+            return None
+        wanted = {k.split("#")[0].lower()
+                  for k in result.op_points if "#branch" in k.lower()}
+        if not wanted:
+            return None
+        present: set[str] = set()
+        for raw in netlist.splitlines():
+            line = raw.strip()
+            if line and line[0] not in "*+.;":
+                present.add(line.split()[0].lower())
+        return netlist if wanted <= present else None

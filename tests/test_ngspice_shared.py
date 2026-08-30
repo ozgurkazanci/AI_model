@@ -332,7 +332,15 @@ class TestNgspiceSharedAdapter:
         assert result.loop_gain.name == "loop_gain_db"
 
     def test_stb_raises_when_loop_never_reaches_unity(self, adapter):
-        with pytest.raises(NgspiceError, match="never crosses 0 dB"):
+        """And the message must name the PEAK gain, not the gain at f_start.
+
+        The old message said "loop gain never crosses 0 dB" whatever the data
+        was, because the ugb guard looked at gain_db[0]. On an AC-coupled loop
+        with 40 dB of mid-band gain it therefore contradicted itself.
+        """
+        with pytest.raises(NgspiceError, match="never exceeds 0 dB"):
+            adapter.stb(RC_AC, SimParams(analysis_type="ac"))
+        with pytest.raises(NgspiceError, match="peak loop gain"):
             adapter.stb(RC_AC, SimParams(analysis_type="ac"))
 
     def test_nmos_iv_curves_are_monotonic(self, adapter):

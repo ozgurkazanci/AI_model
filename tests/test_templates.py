@@ -174,5 +174,12 @@ class TestPDKKnowledge:
         assert "ss" in corners
         assert "ff" in corners
         assert corners["tt"]["temperature"] == 27
-        assert corners["ss"]["temperature"] == -40
+        # SIGN-OFF CONVENTION: SS is slow process, LOW supply and HOT; FF is
+        # fast process, HIGH supply and COLD. This assertion used to demand
+        # ss == -40, which encoded the inverted convention that made every
+        # corner partially cancel itself.
+        assert corners["ss"]["temperature"] == 125
+        assert corners["ss"]["voltage"] < corners["tt"]["voltage"]
+        assert corners["ff"]["temperature"] == -40
+        assert corners["ff"]["voltage"] > corners["tt"]["voltage"]
 

@@ -69,11 +69,17 @@ SKY130_PARAMS = {
         "metal_cap": {"density": 0.04, "unit": "fF/um^2"},
     },
 
-    # PVT Corners
+    # PVT Corners.
+    # SIGN-OFF CONVENTION: a corner is the worst case of ONE thing, so process,
+    # supply and temperature must all push the same way.
+    #   SS = slow silicon, LOW supply,  HOT  (125 C)  -> slowest / least drive
+    #   FF = fast silicon, HIGH supply, COLD (-40 C)  -> fastest / most drive
+    # SS and FF used to carry each other's temperature, which cancelled part of
+    # the corner spread against itself and understated it.
     "corners": {
         "tt": {"process": "typical", "voltage": 1.8, "temperature": 27},
-        "ss": {"process": "slow", "voltage": 1.62, "temperature": -40},
-        "ff": {"process": "fast", "voltage": 1.98, "temperature": 125},
+        "ss": {"process": "slow", "voltage": 1.62, "temperature": 125},
+        "ff": {"process": "fast", "voltage": 1.98, "temperature": -40},
         "sf": {"process": "slow_n_fast_p", "voltage": 1.8, "temperature": 27},
         "fs": {"process": "fast_n_slow_p", "voltage": 1.8, "temperature": 27},
     },
@@ -120,8 +126,8 @@ GF180MCU_PARAMS = {
 
     "corners": {
         "tt": {"process": "typical", "voltage": 3.3, "temperature": 27},
-        "ss": {"process": "slow", "voltage": 2.97, "temperature": -40},
-        "ff": {"process": "fast", "voltage": 3.63, "temperature": 125},
+        "ss": {"process": "slow", "voltage": 2.97, "temperature": 125},
+        "ff": {"process": "fast", "voltage": 3.63, "temperature": -40},
     },
 }
 
@@ -259,8 +265,8 @@ TSMC65_PARAMS = {
     # gate is a hard parse failure ("could not find a valid modelname").
     "corners": {
         "tt": {"process": "typical", "voltage": 1.0, "temperature": 27, "section": "TT"},
-        "ss": {"process": "slow", "voltage": 0.9, "temperature": -40, "section": "SS"},
-        "ff": {"process": "fast", "voltage": 1.1, "temperature": 125, "section": "FF"},
+        "ss": {"process": "slow", "voltage": 0.9, "temperature": 125, "section": "SS"},
+        "ff": {"process": "fast", "voltage": 1.1, "temperature": -40, "section": "FF"},
         "sf": {"process": "slow_n_fast_p", "voltage": 1.0, "temperature": 27, "section": "SF"},
         "fs": {"process": "fast_n_slow_p", "voltage": 1.0, "temperature": 27, "section": "FS"},
     },

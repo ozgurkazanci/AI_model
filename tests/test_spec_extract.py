@@ -34,7 +34,11 @@ skip_no_ngspice = pytest.mark.skipif(not HAS_NGSPICE, reason="ngspice DLL not fo
 # ---------------------------------------------------------------- aliases ---
 
 @pytest.mark.parametrize("name,expected", [
-    ("gain", "dc_gain_db"),
+    # A bare "gain" spec means the amplifier's gain, which for an AC-coupled
+    # or band-pass stage is the MID-BAND gain. Only "dc_gain" asks for the
+    # gain at DC, and measure.py refuses that unless the sweep reaches DC.
+    ("gain", "passband_gain_db"),
+    ("gain_db", "passband_gain_db"),
     ("dc_gain", "dc_gain_db"),
     ("DC_Gain", "dc_gain_db"),        # case insensitive
     ("  pm  ", "phase_margin"),       # whitespace tolerant
@@ -316,3 +320,92 @@ def test_rl_env_reports_unmeasurable_instead_of_flooring():
     payload = json.loads(chk.observation)
     assert "correct" in payload["unmeasurable"]
     assert "correct" not in payload["measured"]
+
+
+# ------------------------------------------------ N3 / C3 regressions -------
+
+def test_output_signal_is_honoured_for_ac_signals():
+    """N3: the AC key is "vdb(<vec>)"; building "vdb(out" silently missed.
+
+    Both the explicit choice and the out/vout/output fallback missed, so
+    selection degraded to "first non-branch vector". That is right by luck when
+    the output happens to be listed first, which is why 49 tests passed over it.
+    Measured cost on a real deck: 15.97 Hz reported for a 999.9 Hz node.
+    """
+    from asic_ai.adapters.spec_extract import _pick_output
+    signals = {"vdb(mid)": 1, "vdb(out)": 2, "vdb(mon)": 3, "vdb(vo)": 4}
+    assert _pick_output(signals, "vo", prefix="vdb(", suffix=")") == "vdb(vo)"
+    assert _pick_output(signals, "out", prefix="vdb(", suffix=")") == "vdb(out)"
+    # No preference: 'out' still wins over whatever is listed first.
+    assert _pick_output(signals, None, prefix="vdb(", suffix=")") == "vdb(out)"
+
+
+def test_ac_metrics_follow_the_requested_output_node():
+    """End to end for N3: two nodes with very different corner frequencies."""
+    freqs = [10.0 ** (i / 20.0) for i in range(0, 141)]   # 1 Hz .. 1 MHz
+
+    def lowpass(fp):
+        return [-10.0 * math.log10(1.0 + (f / fp) ** 2) for f in freqs]
+
+    ac = ACResult(
+        frequencies=freqs,
+        signals={
+            # 'mon' is listed FIRST, so a broken picker returns it.
+            "vdb(mon)": SignalData(name="vdb(mon)", x_values=freqs,
+                                   y_values=lowpass(16.0)),
+            "vdb(vo)": SignalData(name="vdb(vo)", x_values=freqs,
+                                  y_values=lowpass(1000.0)),
+        },
+    )
+    specs = {"bw": {"min": 1, "unit": "Hz"}}
+    got = sx.extract_specs(specs, ac=ac, output_signal="vo").values["bw"]
+    assert got == pytest.approx(1000.0, rel=0.02), (
+        f"followed the wrong node: {got:.2f} Hz instead of ~1000 Hz")
+
+
+def test_rl_env_scores_only_measured_specs(monkeypatch):
+    """C3: unmeasurable specs must not pin the reward to the floor.
+
+    measurable_specs() was written for exactly this and then never called, so
+    the same circuit scored +0.63 or -0.00 depending only on where the model
+    started its AC sweep.
+    """
+    from asic_ai.adapters.base import AdapterConfig
+    from asic_ai.adapters.mock import MockSimulatorAdapter
+    from asic_ai.training.rl_env import CircuitDesignEnv
+
+    adapter = MockSimulatorAdapter(AdapterConfig(binary_path="",
+                                                 work_dir=tempfile.mkdtemp()))
+    rf = RewardFunction(specs=[SpecTarget(name="idd", max_val=200.0, unit="uA")])
+    env = CircuitDesignEnv(adapter, rf, max_steps=5)
+    env.reset({"id": "t", "specs": {
+        "idd": {"max": 200, "unit": "uA"},
+        "correct": {"target": 1, "unit": "bool"},   # never measurable
+    }})
+    env.state.analyses["dc"] = DCResult(op_points={"v1#branch": -9e-05}, sweeps={})
+
+    payload = json.loads(env.step({"name": "spec.check", "arguments": {}}).observation)
+    assert payload["measured"]["idd"] == pytest.approx(90.0, rel=1e-6)
+    assert payload["specs_measured"] == 1 and payload["specs_checked"] == 2
+    assert payload["score"] > 0.0, "the measured spec passes; score must not be floored"
+    # Success still requires full coverage -- a half-checked design is not done.
+    assert payload["passed"] is False
+    assert payload["coverage"] == pytest.approx(0.5)
+
+
+def test_rl_env_reports_when_nothing_is_measurable():
+    """No measurable spec must read as neither pass nor design failure."""
+    from asic_ai.adapters.base import AdapterConfig
+    from asic_ai.adapters.mock import MockSimulatorAdapter
+    from asic_ai.training.rl_env import CircuitDesignEnv
+
+    adapter = MockSimulatorAdapter(AdapterConfig(binary_path="",
+                                                 work_dir=tempfile.mkdtemp()))
+    rf = RewardFunction(specs=[SpecTarget(name="idd", max_val=200.0, unit="uA")])
+    env = CircuitDesignEnv(adapter, rf, max_steps=5)
+    env.reset({"id": "t", "specs": {"correct": {"target": 1, "unit": "bool"}}})
+
+    payload = json.loads(env.step({"name": "spec.check", "arguments": {}}).observation)
+    assert payload["passed"] is False
+    assert payload["coverage"] == 0.0
+    assert "no spec could be measured" in payload["error"]

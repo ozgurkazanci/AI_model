@@ -162,7 +162,7 @@ class CircuitDesignEnv:
         elif not tool_success and tool_name.startswith("sim."):
             # Simulation convergence failure
             reward -= 0.1  # Extra penalty for convergence failure
-            # Don't end episode — let model try to fix
+            # Don't end episode -- let model try to fix
 
         self.state.done = done
 
@@ -285,6 +285,10 @@ class CircuitDesignEnv:
                 tran=self.state.analyses.get("tran"),
                 noise=self.state.analyses.get("noise"),
                 stb=self.state.analyses.get("stb"),
+                # The deck is the only thing that can tell a 0 V sense source
+                # from a supply rail, or spot a current-source-biased block
+                # whose supply current is not in the operating point at all.
+                netlist=self.state.netlist or None,
             )
             measured = extraction.values
             unmeasurable = extraction.unmeasurable
@@ -295,7 +299,31 @@ class CircuitDesignEnv:
                 len(measured), len(specs), sorted(unmeasurable),
             )
 
-        score = self._score(specs, measured)
+        # Score ONLY the specs that were actually measured. Handing the full
+        # spec dict to RewardFunction scores every unmeasurable spec at
+        # SCORE_CLIP_MIN = -1.0, which makes the reward depend on how the model
+        # happened to set up the sweep rather than on the circuit. Measured on
+        # one identical, spec-meeting design: sweeping from 0.01 Hz scored
+        # +0.63, from 1 Hz scored -0.00, purely because dc_gain became
+        # unmeasurable. That is a gradient toward "sweep from 0.01 Hz", not
+        # toward a better amplifier.
+        scored_specs = {k: v for k, v in specs.items() if k in measured}
+
+        if specs and not scored_specs:
+            # Nothing was measurable. This must not read as a pass, and it must
+            # not read as a design failure either -- it is a missing analysis.
+            return {
+                "score": 0.0,
+                "passed": False,
+                "error": "no spec could be measured from the analyses run so far",
+                "specs_checked": len(specs),
+                "specs_measured": 0,
+                "coverage": 0.0,
+                "measured": measured,
+                "unmeasurable": unmeasurable,
+            }
+
+        score = self._score(scored_specs, measured)
         if score is None:
             return {
                 "score": 0.0,
@@ -305,12 +333,18 @@ class CircuitDesignEnv:
                 "unmeasurable": unmeasurable,
             }
 
-        self.state.success = score >= self.early_stop_threshold
+        # The gradient comes from what was measured; SUCCESS additionally
+        # requires that everything was measured. Otherwise a design could be
+        # declared finished with half its specs never checked.
+        coverage = len(scored_specs) / len(specs) if specs else 0.0
+        self.state.success = (score >= self.early_stop_threshold
+                              and not unmeasurable)
         return {
             "score": score,
             "passed": self.state.success,
             "specs_checked": len(specs),
-            "specs_measured": len(measured),
+            "specs_measured": len(scored_specs),
+            "coverage": coverage,
             "measured": measured,
             "unmeasurable": unmeasurable,
         }

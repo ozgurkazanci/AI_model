@@ -94,10 +94,13 @@ _BUILTIN_PDKS: dict[str, dict[str, Any]] = {
         # Nominal PVT attached to each corner name, used when a caller names a
         # corner without giving a voltage and temperature. Matches the corner
         # table already carried in data/pdk_knowledge.py.
+        # SIGN-OFF CONVENTION: SS = slow / LOW supply / HOT (125 C),
+        # FF = fast / HIGH supply / COLD (-40 C). Every axis of a corner must
+        # push the same way, or the corner spread cancels against itself.
         "corner_pvt": {
             "tt": {"voltage": 1.0, "temperature": 27.0},
-            "ss": {"voltage": 0.9, "temperature": -40.0},
-            "ff": {"voltage": 1.1, "temperature": 125.0},
+            "ss": {"voltage": 0.9, "temperature": 125.0},
+            "ff": {"voltage": 1.1, "temperature": -40.0},
             "sf": {"voltage": 1.0, "temperature": 27.0},
             "fs": {"voltage": 1.0, "temperature": 27.0},
         },
@@ -130,8 +133,8 @@ _BUILTIN_PDKS: dict[str, dict[str, Any]] = {
         "supply_voltage": 1.8,
         "corner_pvt": {
             "tt": {"voltage": 1.8, "temperature": 27.0},
-            "ss": {"voltage": 1.62, "temperature": -40.0},
-            "ff": {"voltage": 1.98, "temperature": 125.0},
+            "ss": {"voltage": 1.62, "temperature": 125.0},
+            "ff": {"voltage": 1.98, "temperature": -40.0},
             "sf": {"voltage": 1.8, "temperature": 27.0},
             "fs": {"voltage": 1.8, "temperature": 27.0},
         },
