@@ -6,6 +6,8 @@ from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, field
 import time
 
+from asic_ai import serialization
+
 # Mocking imports that would come from the real project
 # from asic_ai.tool_interface.schema import ToolCall, ToolResult
 # from asic_ai.data.trajectory import Trajectory
@@ -53,7 +55,7 @@ class DistillationGenerator:
                 
             for tool_call in response["tool_calls"]:
                 tool_result = await self.simulator_adapter.execute(tool_call)
-                tool_msg = {"role": "tool", "content": json.dumps(tool_result), "tool_call_id": tool_call["id"]}
+                tool_msg = {"role": "tool", "content": serialization.dumps(tool_result), "tool_call_id": tool_call["id"]}
                 trajectory.messages.append(tool_msg)
                 messages.append(tool_msg)
                 

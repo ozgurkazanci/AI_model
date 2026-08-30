@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping, Optional, Sequence
 
@@ -172,10 +173,38 @@ _SCALES: dict[str, dict[str, float]] = {
     "angle": {"deg": 1.0, "degrees": 1.0, "degree": 1.0, "": 1.0},
     "percent": {"%": 1.0, "percent": 1.0, "": 1.0},
     "gain_db_only": {"db": 1.0, "": 1.0},
-    "noise_density": {"v/sqrt(hz)": 1.0, "nv/sqrt(hz)": 1e-9,
-                      "uv/sqrt(hz)": 1e-6, "pa/sqrt(hz)": 1e-12,
-                      "a/sqrt(hz)": 1.0},
+    # ngspice's inoise_spectrum is referred to the source named on the .noise
+    # card, so its UNIT depends on that source: V/sqrt(Hz) for a voltage source
+    # and A/sqrt(Hz) for a current source. One table holding both let a TIA
+    # task declaring pA/sqrt(Hz) divide a V/sqrt(Hz) measurement by 1e-12 --
+    # silently wrong by twelve orders of magnitude. The families are kept apart
+    # and the .noise card decides which one applies; see noise_input_kind().
+    "noise_density_v": {"v/sqrt(hz)": 1.0, "nv/sqrt(hz)": 1e-9,
+                        "uv/sqrt(hz)": 1e-6},
+    "noise_density_i": {"a/sqrt(hz)": 1.0, "pa/sqrt(hz)": 1e-12,
+                        "na/sqrt(hz)": 1e-9, "fa/sqrt(hz)": 1e-15},
 }
+
+# The .noise card: '.noise v(out) V1 dec 100 1 1G'. The second token is the
+# input source, and its first letter is its type -- a SPICE language rule.
+_NOISE_CARD_RE = re.compile(
+    r"^\s*\.noise\s+\S+\s+([a-zA-Z]\S*)", re.IGNORECASE | re.MULTILINE)
+
+
+def noise_input_kind(netlist: Optional[str]) -> Optional[str]:
+    """'v', 'i', or None: the type of the source a .noise run is referred to.
+
+    This is what makes an input-referred noise density a voltage density or a
+    current density. It is not knowable from a NoiseResult, which carries
+    numbers and no units.
+    """
+    if not netlist:
+        return None
+    m = _NOISE_CARD_RE.search(netlist)
+    if not m:
+        return None
+    letter = m.group(1)[0].lower()
+    return letter if letter in ("v", "i") else None
 
 # Units that mark a spec as functional/digital rather than analog-measurable.
 _NON_ANALOG_UNITS = {"bool", "bits", "lsb", "cycles", "years", "um2"}
@@ -278,7 +307,8 @@ def _compute_metrics(dc: Any, ac: Any, tran: Any, noise: Any, stb: Any,
                      output_signal: Optional[str],
                      supply_sources: Optional[Sequence[str]],
                      netlist: Optional[str] = None,
-                     unmeasurable: Optional[dict[str, str]] = None
+                     unmeasurable: Optional[dict[str, str]] = None,
+                     noise_freq: Optional[float] = None
                      ) -> dict[str, float]:
     """Every canonical metric the supplied results support, in SI units.
 
@@ -304,10 +334,18 @@ def _compute_metrics(dc: Any, ac: Any, tran: Any, noise: Any, stb: Any,
         signals = acd.get("signals") or {}
         key = _pick_output(signals, output_signal, prefix="vdb(", suffix=")")
         if key and key.startswith("vdb("):
-            _, gain_db = _signal_xy(signals[key])
+            # The SIGNAL's own x axis, not the result's global frequency list.
+            # A signal is defined only where its transfer function is defined,
+            # so the two can differ in length, and pairing a short y with a
+            # long x silently shifts every sample against its frequency.
+            sig_f, gain_db = _signal_xy(signals[key])
+            if len(sig_f) == len(gain_db) and sig_f:
+                freqs = sig_f
             raw = key[4:-1]
             ph_sig = signals.get(f"vp({raw})")
             phase = _signal_xy(ph_sig)[1] if ph_sig else None
+            if phase is not None and len(phase) != len(gain_db):
+                phase = None
             am = measure.ac_metrics(freqs, gain_db, phase)
             for metric in ("dc_gain_db", "passband_gain_db", "ugb",
                            "bandwidth_3db", "phase_margin", "gain_margin"):
@@ -358,7 +396,9 @@ def _compute_metrics(dc: Any, ac: Any, tran: Any, noise: Any, stb: Any,
         signals = trd.get("signals") or {}
         key = _pick_output(signals, output_signal)
         if key and t:
-            _, y = _signal_xy(signals[key])
+            sig_t, y = _signal_xy(signals[key])
+            if len(sig_t) == len(y) and sig_t:
+                t = sig_t
             tm = measure.tran_metrics(t, y)
             put("rise_time", tm.get("rise_time"))
             put("fall_time", tm.get("fall_time"))
@@ -368,13 +408,23 @@ def _compute_metrics(dc: Any, ac: Any, tran: Any, noise: Any, stb: Any,
             # Propagation delay needs an input reference; use it when present.
             in_key = _pick_output(signals, "in")
             if in_key and in_key != key:
-                _, y_in = _signal_xy(signals[in_key])
-                put("prop_delay", measure.prop_delay(t, y_in, y))
+                t_in, y_in = _signal_xy(signals[in_key])
+                # Both waveforms must be on the SAME time axis for a 50-50
+                # delay to mean anything.
+                if len(y_in) == len(t) and t_in == t:
+                    put("prop_delay", measure.prop_delay(t, y_in, y))
+                else:
+                    why["prop_delay"] = (
+                        f"the input signal {in_key!r} is sampled on a "
+                        f"different time axis ({len(t_in)} points) from the "
+                        f"output ({len(t)} points), so a 50 pct to 50 pct "
+                        f"delay between them is not defined"
+                    )
 
     # -- noise ---------------------------------------------------------------
     nsd = _as_dict(noise)
     if nsd:
-        freqs = list(nsd.get("frequencies") or [])
+        nfreqs = list(nsd.get("frequencies") or [])
         for field_name, dens, rms in (
             ("input_noise", "input_noise_density", "input_noise_rms"),
             ("output_noise", "output_noise_density", None),
@@ -382,13 +432,68 @@ def _compute_metrics(dc: Any, ac: Any, tran: Any, noise: Any, stb: Any,
             sig = nsd.get(field_name)
             if not sig:
                 continue
-            _, y = _signal_xy(sig)
-            if y:
-                put(dens, y[0])
-                if rms:
-                    put(rms, measure.integrate_noise(freqs, y))
+            xs, y = _signal_xy(sig)
+            if len(xs) != len(y) or not xs:
+                xs = nfreqs
+            if not y:
+                continue
+            value, reason = _noise_density(xs, y, noise_freq)
+            if value is None:
+                why[dens] = reason
+            else:
+                put(dens, value)
+            if rms:
+                put(rms, measure.integrate_noise(xs, y))
 
     return m
+
+
+def _noise_density(freqs: Sequence[float], spectrum: Sequence[float],
+                   noise_freq: Optional[float]
+                   ) -> tuple[Optional[float], str]:
+    """A single noise-density number, or None and the reason there is not one.
+
+    A noise density is a value AT A FREQUENCY. Taking spectrum[0] makes the
+    answer a function of where the sweep starts, which is the same defect that
+    made dc_gain_db depend on f_start: a .noise from 1 Hz reports the 1/f
+    corner and one from 10 kHz reports the thermal floor, for the same circuit.
+
+    So: with `noise_freq`, the density is interpolated there. Without it, the
+    density at the bottom of the sweep is reported ONLY when the spectrum is
+    demonstrably FLAT there -- the same low-frequency slope test ac_metrics
+    uses, in dB/decade of density, where a 1/f region slopes -10 dB/dec and a
+    thermal floor slopes 0.
+    """
+    n = min(len(freqs), len(spectrum))
+    if n == 0:
+        return None, "the spectrum is empty"
+    if noise_freq is not None:
+        v = measure.value_at_freq(freqs, spectrum, float(noise_freq))
+        if v is None:
+            return None, (
+                f"the requested noise frequency {noise_freq:g} Hz is outside "
+                f"the swept band {freqs[0]:g} .. {freqs[n - 1]:g} Hz"
+            )
+        return v, ""
+    db = [measure.db20(v) for v in spectrum[:n]]
+    slope, span = measure.local_slope(list(freqs[:n]), db, 0)
+    if slope is None:
+        return None, (
+            "cannot tell whether the spectrum is flat at the bottom of the "
+            "sweep: no usable low-frequency span"
+        )
+    if abs(slope) > measure.DC_SLOPE_TOL_DB_PER_DEC:
+        return None, (
+            f"refused: the spectrum still slopes {slope:.4g} dB/decade at "
+            f"f_start = {freqs[0]:g} Hz (tolerance "
+            f"{measure.DC_SLOPE_TOL_DB_PER_DEC:g} dB/dec over {span:.3g} "
+            f"decades), so the {spectrum[0]:.4g} measured there is a point on "
+            f"the 1/f corner, not a band noise density -- and which point it "
+            f"is depends only on where the sweep was started. Pass "
+            f"`noise_freq` to ask for the density at a stated frequency, or "
+            f"use the integrated RMS over the band."
+        )
+    return float(spectrum[0]), ""
 
 
 # ----------------------------------------------------------------------------
@@ -432,7 +537,8 @@ def extract_specs(specs: Mapping[str, Any],
                   stb: Any = None,
                   output_signal: Optional[str] = None,
                   supply_sources: Optional[Iterable[str]] = None,
-                  netlist: Optional[str] = None) -> SpecExtraction:
+                  netlist: Optional[str] = None,
+                  noise_freq: Optional[float] = None) -> SpecExtraction:
     """Measure a task's specs from simulation results.
 
     Args:
@@ -449,6 +555,12 @@ def extract_specs(specs: Mapping[str, Any],
             have it: it is the only way to tell a 0 V sense source from a
             supply rail, and the only way to notice that the block is biased
             by a current source whose branch current ngspice never reports.
+        noise_freq: the frequency, in Hz, at which a noise DENSITY spec is
+            declared. A density is a value at a frequency; without this the
+            density is reported only when the spectrum is demonstrably flat at
+            the bottom of the sweep, and refused otherwise, because
+            spectrum[0] on a 1/f corner is a function of where the sweep was
+            started and not of the circuit.
 
     Returns:
         SpecExtraction. `values` holds only specs that were genuinely measured.
@@ -456,7 +568,7 @@ def extract_specs(specs: Mapping[str, Any],
     refusals: dict[str, str] = {}
     si = _compute_metrics(dc, ac, tran, noise, stb, output_signal,
                           list(supply_sources) if supply_sources else None,
-                          netlist, refusals)
+                          netlist, refusals, noise_freq)
 
     out = SpecExtraction(metrics_si=si)
 
@@ -493,6 +605,20 @@ def extract_specs(specs: Mapping[str, Any],
         if dimension is None:
             out.unmeasurable[name] = f"metric {metric!r} has no declared dimension"
             continue
+
+        if dimension == "noise_density":
+            kind = noise_input_kind(netlist)
+            if kind is None:
+                out.unmeasurable[name] = (
+                    "an input-referred noise density is a VOLTAGE density when "
+                    "the .noise card names a voltage source and a CURRENT "
+                    "density when it names a current source, and the result "
+                    "carries no units to say which. Without the netlist a "
+                    f"{unit!r} spec cannot be scaled -- getting it wrong is a "
+                    "factor of 1e12, not a rounding error. Pass `netlist`."
+                )
+                continue
+            dimension = f"noise_density_{kind}"
 
         try:
             out.values[name] = convert_from_si(si[metric], dimension, unit)

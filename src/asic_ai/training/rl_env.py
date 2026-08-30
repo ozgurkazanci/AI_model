@@ -14,6 +14,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from asic_ai import serialization
 from asic_ai.adapters import spec_extract
 
 logger = logging.getLogger(__name__)
@@ -223,17 +224,34 @@ class CircuitDesignEnv:
                 return f"Unknown tool: {tool_name}", False
 
             self.state.sim_results.update(result if isinstance(result, dict) else {})
-            return json.dumps(result, default=str), True
+            # serialization.dumps, never json.dumps: a raw dump writes
+            # -Infinity and NaN for the non-finite floats an AC result can
+            # legitimately carry, and this text goes straight to the model and
+            # on into trajectories and SFT files, where it is not loadable.
+            return serialization.dumps(result), True
 
         except Exception as e:
             logger.warning("Tool %s failed: %s", tool_name, e)
-            return json.dumps({"error": str(e)}), False
+            return serialization.dumps({"error": str(e)}), False
 
     def _run_sim(self, sim_type: str, args: dict) -> dict:
-        """Run simulation via adapter."""
+        """Run simulation via adapter.
+
+        A netlist supplied INLINE with the call becomes the episode's current
+        netlist. The tool schema allows an inline netlist and the SFT data
+        demonstrates it, but state.netlist used to be written only by
+        netlist.patch, so an agent that called sim.dc directly ran the
+        simulation on its deck and then handed spec.check a netlist of None.
+        Without the deck, supply_current cannot tell a 0 V ammeter from a rail:
+        on a deck with a Vsense in series with the load that turned a true
+        198 uA into 378 uA (91 pct high) and a +0.3364 score into -0.5965,
+        entirely according to whether netlist.patch had been called first.
+        """
         netlist = args.get("netlist", self.state.netlist)
         if not netlist:
             return {"error": "No netlist provided"}
+        if args.get("netlist"):
+            self.state.netlist = args["netlist"]
 
         # Use mock adapter's methods if available
         if hasattr(self.adapter, sim_type):
@@ -253,6 +271,8 @@ class CircuitDesignEnv:
         """Run corner simulation."""
         if hasattr(self.adapter, "corners"):
             netlist = args.get("netlist", self.state.netlist)
+            if args.get("netlist"):
+                self.state.netlist = args["netlist"]
             corners = args.get("corners", ["tt", "ss", "ff"])
             result = self.adapter.corners(netlist, corners)
             if isinstance(result, list):

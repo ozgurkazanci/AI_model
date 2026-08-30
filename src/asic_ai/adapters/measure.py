@@ -44,17 +44,23 @@ that is 36 dB wrong, a bandwidth 25x high) came from that one assumption, so it
 is gone:
 
   - dc_gain_db is reported ONLY when the sweep demonstrably reaches DC, judged
-    by the low-frequency SLOPE (see low_frequency_slope), not by comparing two
-    adjacent samples. Otherwise it is None and notes["dc_gain_db"] says why;
-    the gain at the bottom of the sweep is always available as
+    by the low-frequency SLOPE (see low_frequency_slope) AND by the absence of
+    a low-frequency phase LEAD (see low_frequency_phase_lead), not by comparing
+    two adjacent samples. Otherwise it is None and notes["dc_gain_db"] says
+    why; the gain at the bottom of the sweep is always available as
     low_freq_gain_db, under a name that does not claim to be a DC gain.
   - The -3 dB edges are referenced to the passband gain, which is the DC gain
     when the sweep reaches DC and the peak gain otherwise.
-  - The unity-gain crossing is looked for whenever the response actually
-    exceeds 0 dB anywhere, not only when it starts above 0 dB.
-  - The inversion of an inverting loop is inferred from the phase in the
-    MID-BAND (at the peak-gain frequency), which does not move when the sweep
-    start moves.
+  - The unity-gain frequency is the LOOP CLOSURE: the last frequency at which
+    the gain is above 0 dB. Not the first crossing, which on a notched loop
+    gain reports a phase margin that is 100 deg too optimistic.
+  - The inversion of an inverting loop is inferred from the phase at the BOTTOM
+    of the sweep measured against the minimum-phase Bode estimate for the
+    magnitude slope there (90 deg per 20 dB/decade). See
+    phase_inversion_shift. Judging it from any single sample against a fixed
+    0 deg -- the first sample, or the peak-gain sample -- fabricates a 180 deg
+    inversion on every response whose phase happens to pass near +/-180 there,
+    which is exactly where the peak of a resonance sits.
 
 Every ac_metrics() key that is None for a reason carries that reason in the
 returned dict under "notes". Consumers already handle None; they cannot handle
@@ -85,6 +91,23 @@ DC_SLOPE_TOL_DB_PER_DEC = 0.25
 # inversion to be inferred at all, and no shift is applied. See
 # phase_inversion_shift.
 PHASE_INVERSION_TOL_DEG = 60.0
+
+# Minimum-phase Bode relation, degrees of phase per dB/decade of magnitude
+# slope: 90 deg per 20 dB/dec. This is what makes an inversion inferable at
+# ALL: it says what the phase SHOULD be at the bottom of the sweep given the
+# magnitude there, so a departure of a whole 180 deg is evidence of a sign
+# inversion rather than of accumulated pole lag.
+BODE_DEG_PER_DB_PER_DEC = 4.5
+
+# A minimum-phase response that reaches DC cannot LEAD its own magnitude slope
+# at the bottom of the sweep. A residual lead that DECAYS as 1/f is the
+# signature of a zero below f_start -- an AC-coupling capacitor -- and a zero
+# below f_start means the gain at DC is zero, whatever the flat magnitude at
+# f_start says. A coupling corner 100x below f_start moves the magnitude by
+# only 2e-4 dB (undetectable) but still leaves atan(1/100) = 0.57 deg of lead,
+# so the phase is the only instrument fine enough for this.
+DC_PHASE_LEAD_TOL_DEG = 0.01
+DC_PHASE_LEAD_RATIO = 2.0
 
 
 # ----------------------------------------------------------------------------
@@ -153,31 +176,63 @@ def unwrap_deg(phase: Sequence[float]) -> list[float]:
     return out
 
 
+def bode_phase_estimate(slope_db_per_dec: Optional[float]) -> Optional[float]:
+    """Phase a MINIMUM-PHASE response has where its magnitude has this slope.
+
+    The Bode gain-phase relation, in its one-line asymptotic form: 90 deg of
+    lag per 20 dB/decade of rolloff, so 4.5 deg per dB/dec. Exact on a single
+    asymptote and at a real pole (-10 dB/dec <-> -45 deg); worst case about
+    9 deg per pole half a decade off the corner, and about 25 deg for three
+    coincident poles. That is well inside the 60 deg window
+    phase_inversion_shift allows, which is the only thing it is used for.
+
+    Returns None when there is no slope to work from.
+    """
+    if slope_db_per_dec is None:
+        return None
+    return BODE_DEG_PER_DB_PER_DEC * float(slope_db_per_dec)
+
+
 def phase_inversion_shift(phase_unwrapped: Sequence[float], ref_index: int = 0,
-                          tol_deg: float = PHASE_INVERSION_TOL_DEG) -> int:
-    """How many whole 180 deg turns to remove, judged at ONE reference sample.
+                          tol_deg: float = PHASE_INVERSION_TOL_DEG,
+                          expected_deg: float = 0.0) -> int:
+    """How many whole 180 deg turns to remove at ONE reference sample.
 
-    Returns k, so that `phase - 180*k` puts the reference sample near 0 deg.
-    Returns 0 when the reference phase is further than `tol_deg` from any
-    multiple of 180 deg, because then there is no inversion to infer and
-    guessing one would fabricate a 180 deg error rather than remove one.
+    Returns k, so that `phase - 180*k` puts the reference sample near
+    `expected_deg`. `expected_deg` is what a NON-inverting minimum-phase
+    response would show there; ac_metrics gets it from the magnitude slope via
+    bode_phase_estimate(), which is what makes the answer independent of where
+    the sweep starts.
 
-    `ref_index` must point at a sample that is INVARIANT to where the sweep
-    starts -- ac_metrics uses the peak-gain (mid-band) sample. Using sample 0
-    is what made the phase margin depend on the sweep start.
+    Judging an inversion against a FIXED 0 deg -- the old behaviour, whether
+    the reference was sample 0 or the peak-gain sample -- fabricates an
+    inversion on any response whose phase passes near +/-180 deg at the
+    reference. On a resonant response the peak-gain sample sits at exactly such
+    a phase, and the resulting 180 deg error turns an unstable loop
+    (PM -68.2 deg) into a comfortable one (+111.8 deg).
+
+    When the residual after removing k turns is further than `tol_deg` from
+    `expected_deg` the 180 deg question is UNANSWERABLE from this data, and no
+    inversion is claimed. The nearest whole 360 deg turn is still removed
+    (k is then even): a 2*pi offset is an artefact of atan2's principal branch,
+    never information, and leaving it in is what made the gain margin of a
+    plain 3-pole amplifier vanish whenever the sweep started above its poles.
+
+    An ODD k is a real inversion. An EVEN k is a branch correction only.
     """
     n = len(phase_unwrapped)
     if n == 0:
         return 0
     i = min(max(0, ref_index), n - 1)
     p = float(phase_unwrapped[i])
-    if not math.isfinite(p):
+    if not math.isfinite(p) or not math.isfinite(float(expected_deg)):
         return 0
-    k = int(round(p / 180.0))
+    d = p - float(expected_deg)
+    k = int(round(d / 180.0))
     if k == 0:
         return 0
-    if abs(p - 180.0 * k) > tol_deg:
-        return 0
+    if abs(d - 180.0 * k) > tol_deg:
+        return 2 * int(round(d / 360.0))
     return k
 
 
@@ -275,9 +330,13 @@ def crossing_freq(freqs: Sequence[float], values: Sequence[float], level: float,
     """First frequency where `values` crosses `level`, interpolated in log10(f).
 
     direction: -1 falling only, +1 rising only, 0 either. Returns None when the
-    level is never crossed. `start_index` begins the scan at a later sample,
-    which is how ac_metrics looks for the unity-gain crossing ABOVE the
-    peak-gain frequency of a band-pass response.
+    level is never crossed. `start_index` begins the scan at a later sample.
+
+    THE FIRST crossing is not the unity-gain frequency of a loop and not the
+    band edge of a response that has several. ac_metrics uses closure_freq()
+    for the loop closure and all_crossings() when it has to reason about the
+    whole set; this function is for the cases where "the first one" really is
+    the answer, such as the upper -3 dB edge of a single-passband response.
     """
     n = min(len(freqs), len(values))
     for i in range(max(0, start_index), n - 1):
@@ -322,6 +381,79 @@ def last_crossing_freq_below(freqs: Sequence[float], values: Sequence[float],
         lf = _interp(math.log10(f0), a, math.log10(f1), b, level)
         return 10.0 ** lf
     return None
+
+
+def all_crossings(freqs: Sequence[float], values: Sequence[float], level: float,
+                  direction: int = 0, start_index: int = 0) -> list[float]:
+    """EVERY crossing of `level`, interpolated in log10(f), in sweep order.
+
+    crossing_freq() returns the first one. A response can have several -- a
+    notched loop gain crosses 0 dB three times -- and which one a metric wants
+    is a decision that has to be made explicitly, not by taking whichever came
+    first.
+    """
+    out: list[float] = []
+    n = min(len(freqs), len(values))
+    for i in range(max(0, start_index), n - 1):
+        a, b = float(values[i]), float(values[i + 1])
+        falling, rising = _seg_crosses(a, b, level)
+        if direction < 0 and not falling:
+            continue
+        if direction > 0 and not rising:
+            continue
+        if direction == 0 and not (falling or rising):
+            continue
+        f0, f1 = float(freqs[i]), float(freqs[i + 1])
+        if f0 <= 0.0 or f1 <= 0.0:
+            out.append(_interp(f0, a, f1, b, level))
+            continue
+        out.append(10.0 ** _interp(math.log10(f0), a, math.log10(f1), b, level))
+    return out
+
+
+def closure_freq(freqs: Sequence[float], values: Sequence[float],
+                 level: float) -> Optional[float]:
+    """The frequency above which `values` stays at or below `level`, forever.
+
+    This is the LOOP CLOSURE, and it is what a unity-gain frequency has to be:
+    the last frequency at which the gain is still above unity. Taking the FIRST
+    falling crossing instead is optimistic in exactly the dangerous direction.
+    On a loop gain with a Q = 25 notch the first crossing is at 618.03 Hz
+    (phase margin +89.58 deg, "comfortable"), the loop climbs back above 0 dB,
+    and the real closure is at 148554.84 Hz where the phase margin is
+    -14.07 deg and the loop is UNSTABLE.
+
+    A run of samples sitting exactly ON the level is not a re-crossing: the
+    answer is where the response first ARRIVED at the level, so a gain curve
+    that flattens at exactly 0 dB and only later falls away still reports the
+    frequency at which it reached 0 dB.
+
+    Returns None when the response is above `level` at the top of the sweep
+    (it has not closed inside the sweep) or never above it at all.
+    """
+    n = min(len(freqs), len(values))
+    last_above: Optional[int] = None
+    for i in range(n - 1, -1, -1):
+        v = float(values[i])
+        if _is_nan(v):
+            continue
+        if v > level:
+            last_above = i
+            break
+    if last_above is None or last_above >= n - 1:
+        return None
+    nxt: Optional[int] = None
+    for j in range(last_above + 1, n):
+        if not _is_nan(float(values[j])):
+            nxt = j
+            break
+    if nxt is None:
+        return None
+    a, b = float(values[last_above]), float(values[nxt])
+    f0, f1 = float(freqs[last_above]), float(freqs[nxt])
+    if f0 <= 0.0 or f1 <= 0.0:
+        return _interp(f0, a, f1, b, level)
+    return 10.0 ** _interp(math.log10(f0), a, math.log10(f1), b, level)
 
 
 def value_at_freq(freqs: Sequence[float], values: Sequence[float],
@@ -378,15 +510,30 @@ def low_frequency_slope(freqs: Sequence[float], values: Sequence[float],
     Returns (None, None) when there is no usable low-frequency span (fewer than
     two finite samples, or a non-positive start frequency).
     """
+    return local_slope(freqs, values, 0, span_dec)
+
+
+def local_slope(freqs: Sequence[float], values: Sequence[float],
+                start_index: int = 0, span_dec: float = DC_SLOPE_SPAN_DEC
+                ) -> tuple[Optional[float], Optional[float]]:
+    """(slope in units/decade upward from `start_index`, span used in decades).
+
+    The same measurement low_frequency_slope makes, at an arbitrary sample.
+    Used to compare the phase against the Bode estimate at more than one place
+    in the sweep, which is how a zero BELOW the sweep is told apart from a zero
+    above it: the first leaves a lead that decays as 1/f, the second a lead
+    that grows with f.
+    """
     n = min(len(freqs), len(values))
-    if n < 2:
+    i0 = max(0, int(start_index))
+    if n - i0 < 2:
         return None, None
-    f0 = float(freqs[0])
-    g0 = float(values[0])
+    f0 = float(freqs[i0])
+    g0 = float(values[i0])
     if f0 <= 0.0 or not math.isfinite(g0):
         return None, None
     j: Optional[int] = None
-    for i in range(1, n):
+    for i in range(i0 + 1, n):
         fi = float(freqs[i])
         if fi <= f0 or not math.isfinite(float(values[i])):
             continue
@@ -399,6 +546,79 @@ def low_frequency_slope(freqs: Sequence[float], values: Sequence[float],
     if span <= 1e-12:
         return None, None
     return (float(values[j]) - g0) / span, span
+
+
+def low_frequency_phase_lead(freqs: Sequence[float], gain_db: Sequence[float],
+                             phase_unwrapped: Optional[Sequence[float]],
+                             ratio: float = DC_PHASE_LEAD_RATIO
+                             ) -> tuple[Optional[float], Optional[float],
+                                        Optional[float]]:
+    """(1/f lead component at f_start, residual at f_start, residual at ratio*f_start).
+
+    The RESIDUAL is the measured phase minus the minimum-phase Bode estimate
+    for the magnitude slope at the same frequency. Two different things put a
+    residual there, and they must not be confused:
+
+      - a pole ABOVE the sweep contributes a lag that grows in proportion to f
+        (-57.3 * f/fp degrees),
+      - a zero BELOW the sweep contributes a lead that decays as 1/f
+        (+57.3 * fz/f degrees).
+
+    Only the second one means the response does not reach DC, and on a real
+    amplifier the first one is the larger of the two: an AC-coupled stage with
+    a 10 Hz coupling corner and a 1 MHz load pole, swept from 10 kHz, shows
+    +0.057 deg of coupling lead buried under -0.573 deg of load-pole lag. A
+    single residual sample cannot see it. Two samples, one decade-fraction
+    apart, separate the 1/f term from the f term exactly:
+
+        r(f) = A/f - B*f     ->     A/f0 = r*(r0*r - r1)/(r*r - 1)
+
+    for f1 = ratio*f0, which for ratio = 2 is (4*r0 - 2*r1)/3. The ratio is
+    kept small on purpose: the Bode residual of a pole is -57.3x + 90x^2 in
+    x = f/fp, and a wide span lets the quadratic term corrupt the separation.
+
+    Returns (None, ...) when there is no phase, no usable slope, or no second
+    sample at `ratio` times f_start.
+    """
+    if phase_unwrapped is None:
+        return None, None, None
+    n = min(len(freqs), len(gain_db), len(phase_unwrapped))
+    if n < 2 or float(freqs[0]) <= 0.0:
+        return None, None, None
+
+    def _resid(i: Optional[int]) -> Optional[float]:
+        if i is None:
+            return None
+        p = float(phase_unwrapped[i])
+        if not math.isfinite(p):
+            return None
+        slope, _ = local_slope(freqs, gain_db, i)
+        est = bode_phase_estimate(slope)
+        if est is None:
+            return None
+        return p - est
+
+    r0 = _resid(0)
+    f_up = float(freqs[0]) * float(ratio)
+    j: Optional[int] = None
+    for i in range(1, n):
+        if float(freqs[i]) >= f_up:
+            j = i
+            break
+    r1 = _resid(j)
+    if r0 is None:
+        return None, r0, r1
+    if r1 is None:
+        # No second point: the 1/f term cannot be separated from the f term.
+        # Report the raw residual, which is conservative -- it can only
+        # over-report a lead when the poles above the sweep are negligible.
+        return r0, r0, None
+    rr = float(freqs[j]) / float(freqs[0])
+    denom = rr * rr - 1.0
+    if abs(denom) < 1e-12:
+        return r0, r0, r1
+    lead = rr * (r0 * rr - r1) / denom
+    return lead, r0, r1
 
 
 def ac_metrics(freqs: Sequence[float], gain_db: Sequence[float],
@@ -424,13 +644,22 @@ def ac_metrics(freqs: Sequence[float], gain_db: Sequence[float],
       f_3db_lo, f_3db_hi   both -3 dB edges. f_3db_lo is non-None only for a
                            band-pass response; then the -3 dB SPAN is
                            f_3db_hi - f_3db_lo and notes says so.
-      ugb                  unity-gain frequency, looked for whenever the peak
-                           gain exceeds 0 dB.
+      ugb                  the LOOP CLOSURE: the last frequency at which the
+                           gain is still above 0 dB. Looked for whenever the
+                           peak gain exceeds 0 dB. Refused when the magnitude
+                           is flat to within a millionth of a dB, because then
+                           the crossing is floating-point noise.
       phase_margin         180 + phase(ugb), after removing any whole inversion
-                           inferred from the MID-BAND phase.
-      gain_margin, f_180   -gain at the first -180 deg crossing.
-      phase_inversion_k    whole 180 deg turns removed (0 for a non-inverting
-                           response).
+                           inferred at the BOTTOM of the sweep against the
+                           Bode estimate for the magnitude slope there.
+      gain_margin, f_180   -gain at the WORST -180 deg crossing (the one with
+                           the highest gain). None only when the phase never
+                           reaches -180 deg at all, which is a genuinely
+                           infinite margin; a phase that SITS at -180 without
+                           crossing reports its worst-case gain, never None.
+      phase_inversion_k    whole 180 deg turns removed. 0 for a non-inverting
+                           response; an ODD value is a real sign inversion, an
+                           EVEN one is only atan2's 2*pi branch.
       rolloff_db_per_dec   gain change over the top decade of the sweep.
       notes                metric name -> why it is None or what it refers to.
     """
@@ -469,19 +698,81 @@ def ac_metrics(freqs: Sequence[float], gain_db: Sequence[float],
     out["peak_gain_db"] = peak
     out["f_peak"] = f[peak_i]
 
-    # -- does this sweep actually reach DC? ---------------------------------
+    # -- phase bookkeeping, BEFORE the DC decision ---------------------------
+    # The DC decision needs the phase (see low_frequency_phase_lead), and the
+    # phase needs the magnitude slope, so the slope is measured first and the
+    # unwrap/inversion is settled here rather than at the end of the function.
     slope, span = low_frequency_slope(f, g)
     out["low_slope_db_per_dec"] = slope
+
+    ph: Optional[list[float]] = None
+    k = 0
+    if phase_deg is not None:
+        ph = unwrap_deg(list(phase_deg)[:n])
+        expected = bode_phase_estimate(slope)
+        if normalize_phase and expected is not None:
+            k = phase_inversion_shift(ph, ref_index=0, expected_deg=expected)
+            if k:
+                ph = [p - 180.0 * k for p in ph]
+        out["phase_inversion_k"] = float(k)
+        if k:
+            kind = ("an inversion of" if k % 2 else
+                    "a 2*pi branch artefact of")
+            notes["phase"] = (
+                f"{kind} {180.0 * k:+g} deg was removed. It was inferred at "
+                f"f_start = {f[0]:g} Hz, where a minimum-phase response with "
+                f"the measured {slope:.4g} dB/decade slope would show "
+                f"{expected:.4g} deg. An ODD multiple of 180 deg is a real "
+                f"sign inversion; an EVEN one is only atan2's principal "
+                f"branch, which carries no information."
+            )
+        elif normalize_phase and expected is None:
+            notes["phase"] = (
+                "no inversion was inferred: the magnitude slope at the bottom "
+                "of the sweep is not measurable, so there is nothing to "
+                "compare the phase against"
+            )
+
+    # -- does this sweep actually reach DC? ---------------------------------
+    lead, resid0, resid1 = low_frequency_phase_lead(f, g, ph)
     if f[0] <= 0.0:
         reaches_dc: Optional[bool] = True
     elif slope is None:
         reaches_dc = None
+    elif abs(slope) > DC_SLOPE_TOL_DB_PER_DEC:
+        reaches_dc = False
+    elif lead is not None and lead > DC_PHASE_LEAD_TOL_DEG:
+        # Flat magnitude, but the phase carries a 1/f lead that the flatness
+        # cannot explain. Only a zero BELOW the sweep does that.
+        reaches_dc = False
+        f_zero = f[0] * math.tan(math.radians(min(lead, 89.0)))
+        notes["dc_gain_db"] = (
+            f"the sweep does not reach DC. The magnitude IS flat at "
+            f"f_start = {f[0]:g} Hz ({slope:.4g} dB/decade), but the phase "
+            f"carries a 1/f LEAD of {lead:.4g} deg there (residual "
+            f"{resid0:.4g} deg at {f[0]:g} Hz against "
+            f"{resid1:.4g} deg at {f[0] * DC_PHASE_LEAD_RATIO:g} Hz). Only a "
+            f"zero BELOW the sweep leads like that, and here it sits at about "
+            f"{f_zero:.4g} Hz -- an AC-coupling capacitor, whose gain at DC is "
+            f"zero however flat the magnitude looks at f_start. The "
+            f"{g[0]:.4g} dB measured there is reported as low_freq_gain_db. "
+            f"Sweep from below {f_zero:.4g} Hz to measure what DC does."
+        )
     else:
-        reaches_dc = abs(slope) <= DC_SLOPE_TOL_DB_PER_DEC
+        reaches_dc = True
 
     if reaches_dc:
         out["dc_gain_db"] = g[0]
         out["dc_gain_valid"] = 1.0
+        if f[0] > 0.0 and lead is None:
+            notes["dc_gain_db"] = (
+                f"the magnitude is flat at f_start = {f[0]:g} Hz "
+                f"({slope:.4g} dB/decade) and NO PHASE was supplied, so the "
+                "one instrument fine enough to see an AC-coupling zero below "
+                "the sweep was not available. Flatness alone cannot tell a "
+                "response that reaches DC from one whose coupling corner is "
+                "far below f_start. Pass the phase to get that check."
+            )
     elif reaches_dc is None:
         out["dc_gain_valid"] = None
         notes["dc_gain_db"] = (
@@ -490,14 +781,14 @@ def ac_metrics(freqs: Sequence[float], gain_db: Sequence[float],
         )
     else:
         out["dc_gain_valid"] = 0.0
-        notes["dc_gain_db"] = (
+        notes.setdefault("dc_gain_db", (
             f"the sweep does not reach DC. At f_start = {f[0]:g} Hz the "
             f"response still slopes {slope:.4g} dB/decade (tolerance "
             f"{DC_SLOPE_TOL_DB_PER_DEC:g} dB/dec over {span:.3g} decades), so "
             f"the {g[0]:.4g} dB measured there is a point on a rolloff, not a "
             "DC gain. It is reported as low_freq_gain_db. Extend the sweep "
             "downward to measure the DC gain."
-        )
+        ))
 
     # -- passband reference for the -3 dB edges ------------------------------
     if out["dc_gain_db"] is not None:
@@ -522,7 +813,27 @@ def ac_metrics(freqs: Sequence[float], gain_db: Sequence[float],
             out["f_3db_lo"] = last_crossing_freq_below(
                 f, g, ref - DB3, peak_i, direction=1)
         out["bandwidth_3db"] = out["f_3db_hi"]
-        if out["f_3db_hi"] is None:
+        # A response that climbs back INTO the passband above the first upper
+        # edge is not a low-pass with a bandwidth; it is a notch or a
+        # multi-band response, and the first edge is the STOP-BAND edge. There
+        # is no single -3 dB bandwidth to report, so none is reported.
+        recovery = None
+        if out["f_3db_hi"] is not None:
+            back_up = [fr for fr in all_crossings(f, g, ref - DB3, direction=1)
+                       if fr > out["f_3db_hi"]]
+            recovery = back_up[0] if back_up else None
+        if recovery is not None:
+            out["bandwidth_3db"] = None
+            notes["bandwidth_3db"] = (
+                f"refused: the gain falls {DB3:.4g} dB below the {ref_kind} "
+                f"reference of {ref:.4g} dB at {out['f_3db_hi']:.6g} Hz but "
+                f"climbs back above it at {recovery:.6g} Hz. That is a NOTCH "
+                f"or a multi-band response: the first edge is the edge of a "
+                f"stop band, not a -3 dB bandwidth, and reporting it as one is "
+                f"how a band-stop filter comes to be scored as a low-pass. "
+                f"f_3db_hi still carries the first edge."
+            )
+        elif out["f_3db_hi"] is None:
             notes["bandwidth_3db"] = (
                 f"the gain never falls {DB3:.4g} dB below the {ref_kind} "
                 f"reference of {ref:.4g} dB inside the sweep (last sample "
@@ -544,14 +855,39 @@ def ac_metrics(freqs: Sequence[float], gain_db: Sequence[float],
             )
 
     # -- unity gain ----------------------------------------------------------
-    if peak > 0.0:
-        ugb = crossing_freq(f, g, 0.0, direction=-1, start_index=peak_i)
+    # The magnitude span of the whole sweep. A response that is flat to within
+    # a millionth of a dB has no meaningful 0 dB crossing: whichever sample the
+    # interpolation lands on is floating-point noise, and so is every metric
+    # derived from it.
+    finite_g = [v for v in g if math.isfinite(v)]
+    g_span = (max(finite_g) - min(finite_g)) if finite_g else 0.0
+    if peak > 0.0 and g_span <= 1e-6:
+        ugb = None
+        notes["ugb"] = (
+            f"refused: the magnitude varies by only {g_span:.3g} dB across the "
+            f"whole sweep (peak {peak:.6g} dB). A 0 dB crossing on a curve this "
+            "flat is floating-point noise, and so is any phase margin taken at "
+            "it."
+        )
+    elif peak > 0.0:
+        ugb = closure_freq(f, g, 0.0)
         out["ugb"] = ugb
+        downs = all_crossings(f, g, 0.0, direction=-1)
         if ugb is None:
             notes["ugb"] = (
                 f"the gain reaches {peak:.4g} dB but never falls back through "
                 f"0 dB inside the sweep (last sample {g[-1]:.4g} dB at "
                 f"{f[-1]:g} Hz); extend the sweep upward"
+            )
+        elif len(downs) > 1:
+            notes["ugb"] = (
+                f"the gain crosses 0 dB {len(downs)} times downward "
+                f"({', '.join(f'{c:.6g}' for c in downs)} Hz) and climbs back "
+                f"above 0 dB in between. ugb is the LOOP CLOSURE, the last "
+                f"frequency at which the gain is still above unity "
+                f"({ugb:.6g} Hz); the phase margin is taken there. The earlier "
+                f"crossings are not the closure and a margin taken at one of "
+                f"them is optimistic."
             )
     else:
         ugb = None
@@ -570,22 +906,8 @@ def ac_metrics(freqs: Sequence[float], gain_db: Sequence[float],
             if g_hi is not None and g_lo is not None:
                 out["rolloff_db_per_dec"] = g_hi - g_lo
 
-    if phase_deg is None:
+    if ph is None:
         return out
-
-    ph = unwrap_deg(list(phase_deg)[:n])
-    k = 0
-    if normalize_phase:
-        k = phase_inversion_shift(ph, ref_index=peak_i)
-        if k:
-            ph = [p - 180.0 * k for p in ph]
-    out["phase_inversion_k"] = float(k)
-    if k:
-        notes["phase"] = (
-            f"an inversion of {180.0 * k:+g} deg was removed. It was inferred "
-            f"from the mid-band phase at the peak-gain frequency "
-            f"{f[peak_i]:g} Hz, which does not move when f_start moves."
-        )
 
     if ugb is not None:
         p_at_ugb = value_at_freq(f, ph, ugb)
@@ -599,20 +921,69 @@ def ac_metrics(freqs: Sequence[float], gain_db: Sequence[float],
     elif "ugb" in notes:
         notes["phase_margin"] = "no unity-gain frequency: " + notes["ugb"]
 
-    f180 = crossing_freq(f, ph, -180.0, direction=-1)
-    out["f_180"] = f180
-    if f180 is not None:
-        g_at_180 = value_at_freq(f, g, f180)
-        if g_at_180 is not None and math.isfinite(g_at_180):
-            out["gain_margin"] = -g_at_180
+    # -- gain margin ---------------------------------------------------------
+    # Every -180 deg crossing is a candidate. The one that matters is the WORST
+    # of them: the loop is unstable if the gain is above unity at ANY frequency
+    # where the phase is -180, so the smallest margin is the honest one.
+    crossings_180 = all_crossings(f, ph, -180.0, direction=-1)
+    worst_f: Optional[float] = None
+    worst_g: Optional[float] = None
+    for fc in crossings_180:
+        gc = value_at_freq(f, g, fc)
+        if gc is None or not math.isfinite(gc):
+            continue
+        if worst_g is None or gc > worst_g:
+            worst_g, worst_f = gc, fc
+    if worst_f is not None:
+        out["f_180"] = worst_f
+        out["gain_margin"] = -float(worst_g)
+        if len(crossings_180) > 1:
+            notes["gain_margin"] = (
+                f"the phase crosses -180 deg {len(crossings_180)} times; the "
+                f"margin is reported at the WORST of them ({worst_f:.6g} Hz, "
+                f"gain {worst_g:.4g} dB), because a loop is unstable if its "
+                f"gain exceeds unity at ANY -180 deg crossing."
+            )
     else:
-        # If the phase never reaches -180 the loop is unconditionally stable and
-        # the gain margin is infinite. It is deliberately left as None rather
-        # than 0.0, which would read as marginally unstable.
-        notes["gain_margin"] = (
-            "the phase never falls through -180 deg inside the sweep, so the "
-            "gain margin is infinite; reported as None, never as 0.0"
-        )
+        # No crossing. Either the phase stays above -180 for the whole sweep --
+        # unconditionally stable, an infinite margin -- or it SITS at or below
+        # -180 without ever crossing, which is the opposite situation and must
+        # never be reported as infinite.
+        first = next((ph[i] for i in range(n) if math.isfinite(ph[i])), None)
+        at_or_below = [i for i in range(n)
+                       if math.isfinite(ph[i]) and ph[i] <= -180.0 + 1e-9]
+        if first is not None and first < -180.0 - 1e-9:
+            # The phase is ALREADY past -180 at the bottom of the sweep, so the
+            # crossing -- and the gain at it -- lie BELOW f_start and are not in
+            # this data. The worst case inside the sweep would be optimistic by
+            # exactly the gain the sweep cannot see, so nothing is reported.
+            notes["gain_margin"] = (
+                f"refused: the phase is already {first:.4g} deg at "
+                f"f_start = {f[0]:g} Hz, past -180 deg, so the -180 deg "
+                f"crossing is BELOW the sweep and the gain there is not in "
+                f"this data. The worst case inside the sweep "
+                f"({-max((g[i] for i in at_or_below if math.isfinite(g[i])), default=float('nan')):.4g} dB) "
+                f"is optimistic by whatever the response does below f_start. "
+                f"Extend the sweep downward. This is NOT an infinite margin."
+            )
+        elif at_or_below:
+            gs = [g[i] for i in at_or_below if math.isfinite(g[i])]
+            if gs:
+                out["gain_margin"] = -max(gs)
+                out["f_180"] = f[max(at_or_below, key=lambda i: g[i]
+                                     if math.isfinite(g[i]) else -math.inf)]
+            notes["gain_margin"] = (
+                f"the phase never CROSSES -180 deg because it is already at or "
+                f"below -180 deg at {len(at_or_below)} of {n} samples "
+                f"(from {f[at_or_below[0]]:g} Hz). The margin is reported at "
+                f"the highest gain in that region, which is the worst case; it "
+                f"is emphatically NOT infinite."
+            )
+        else:
+            notes["gain_margin"] = (
+                "the phase never falls through -180 deg inside the sweep, so "
+                "the gain margin is infinite; reported as None, never as 0.0"
+            )
     return out
 
 
@@ -622,7 +993,7 @@ def ac_metrics(freqs: Sequence[float], gain_db: Sequence[float],
 
 def settled_levels(y: Sequence[float], frac: float = 0.02,
                    tol: float = 0.002) -> tuple[float, float]:
-    """Initial and final settled levels, averaged over the first/last `frac`.
+    """Initial level and END-OF-RECORD level, averaged over the first/last `frac`.
 
     Deliberately not min()/max(): on a ringing waveform max() is the overshoot
     peak, which shrinks the apparent 90 pct level and understates rise time.
@@ -639,27 +1010,35 @@ def settled_levels(y: Sequence[float], frac: float = 0.02,
 
     Quiescence is judged by DRIFT, not by spread: the mean of the window's
     second half minus the mean of its first half, compared against `tol` times
-    the total excursion. Zero-mean noise cancels in both halves, so a genuinely
-    quiescent but noisy window keeps its full averaging, while a window that
-    straddles an edge fails immediately. A spread test cannot tell those two
-    apart and throws away the averaging exactly when it is needed.
+    the PEAK-TO-PEAK excursion of the whole record. Zero-mean noise cancels in
+    both halves, so a genuinely quiescent but noisy window keeps its full
+    averaging, while a window that straddles an edge fails immediately. A
+    spread test cannot tell those two apart and throws away the averaging
+    exactly when it is needed. The scale has to be the peak-to-peak excursion
+    rather than |y_end - y[0]|: on a PULSE the waveform ends where it started,
+    that difference is ~0, and the drift test then passes whatever the leading
+    window contains -- including the whole of the first edge.
 
-    The TRAILING window is averaged as-is: on a waveform that is still ringing
-    at the end of the simulation the mean of the tail is a better estimate of
-    the final level than its last sample. Use settling_time() to find out
-    whether the waveform settled at all -- it returns None when it did not.
+    THE SECOND RETURN VALUE IS NOT NECESSARILY A FINAL LEVEL. It is the mean of
+    the tail of the record, which is the settled final level only for a
+    waveform that actually settles. For a pulse or a periodic waveform it is
+    the level the signal happens to be at when the simulation stops. Use
+    waveform_levels(), which detects that case and measures the first edge
+    instead; every metric in this module does.
     """
     n = len(y)
     if n == 0:
         return 0.0, 0.0
     k0 = max(1, int(n * frac))
     y1 = sum(float(v) for v in y[-k0:]) / k0
+    finite = [float(v) for v in y if math.isfinite(float(v))]
+    ptp = (max(finite) - min(finite)) if finite else 0.0
     k = k0
     while k > 1:
         window = [float(v) for v in y[:k]]
         half = k // 2
         drift = abs(sum(window[half:]) / (k - half) - sum(window[:half]) / half)
-        excursion = abs(y1 - window[0])
+        excursion = max(ptp, abs(y1 - window[0]))
         if excursion <= 0.0 or drift <= tol * excursion:
             break
         k //= 2
@@ -667,10 +1046,167 @@ def settled_levels(y: Sequence[float], frac: float = 0.02,
     return y0, y1
 
 
+# A waveform whose end-of-record level is closer to its starting level than
+# this fraction of its peak-to-peak excursion did not step anywhere: it went
+# out and came back. A second-order step response approaches but never reaches
+# 0.5 from above (100 pct overshoot is the limit), so 0.4 separates the two
+# cases with margin at both ends.
+PULSE_RETURN_FRAC = 0.4
+
+# Below this fraction of the peak-to-peak excursion, a reversal is numerical
+# noise rather than overshoot. 1 ppm of the excursion is far below any
+# overshoot worth reporting and far above a simulator's integration jitter.
+MONOTONE_TOL_FRAC = 1e-6
+
+
+@dataclass
+class WaveformLevels:
+    """The 0 pct and 100 pct references for a transient measurement.
+
+    `kind` is what the record actually contains:
+
+      "step"  the waveform goes somewhere and stays. y1 is the settled level,
+              the measurement region is the whole record.
+      "pulse" the waveform goes out and comes back -- a PULSE source, a clock,
+              a ring oscillator, any periodic drive. y1 is the level of the
+              FIRST plateau (IEEE 181 calls it the top; a scope calls it the
+              same), and the measurement region ends where the return edge
+              starts, so nothing downstream measures across it.
+      "flat"  no excursion at all; nothing is defined.
+    """
+
+    y0: float = 0.0
+    y1: float = 0.0
+    kind: str = "flat"
+    i_edge: int = 0
+    """First sample of the first edge."""
+    i_end: int = 0
+    """Last sample of the measurement region, inclusive."""
+    monotone: bool = True
+    """True when the region never reverses direction by more than 1 ppm."""
+    note: str = ""
+
+
+def waveform_levels(y: Sequence[float], frac: float = 0.02,
+                    tol: float = 0.002) -> WaveformLevels:
+    """The base and top levels a transient metric must be referenced to.
+
+    settled_levels() alone is right only for a STEP. Fed a pulse it takes the
+    mean of the tail as "the final level", and on any waveform that returns to
+    where it started that is the STARTING level, so the whole 10/90 ladder is
+    referenced to a span of nothing. Measured on this repo's own
+    scripts/agent_ngspice.py deck (PULSE(0 1.8 0 1n 1n 5u 10u) into 1k/1n,
+    .tran 0.1u 20u) the reported step was 14.3 mV instead of 1.8 V, and with it
+
+        rise_time      6.39632e-09 s   against 2.19722e-06 s   (343x fast)
+        overshoot_pct  12374.85 pct    against 0 pct
+        slew_rate      1.793 V/us      against 0.655 V/us
+
+    every one of them a confident number for a step that is not there. Every
+    inverter, buffer, ring oscillator and clocked block in the eval set is
+    driven by exactly such a source.
+
+    So a returning waveform is DETECTED and the FIRST EDGE is measured instead:
+    the base is the quiescent level before the edge, the top is the plateau the
+    first excursion reaches, and the region ends where the waveform starts
+    coming back. That is the standard pulse measurement, and for a testbench
+    that drives an amplifier with a PULSE source it is also exactly the step
+    response the caller wanted.
+    """
+    n = len(y)
+    lv = WaveformLevels()
+    if n == 0:
+        return lv
+    vals = [float(v) for v in y]
+    finite = [v for v in vals if math.isfinite(v)]
+    if not finite:
+        lv.note = "no finite sample in the waveform"
+        return lv
+    ptp = max(finite) - min(finite)
+    y0, y_tail = settled_levels(vals, frac, tol)
+    lv.y0 = y0
+    lv.i_end = n - 1
+
+    if ptp <= 0.0:
+        lv.y1 = y0
+        lv.kind = "flat"
+        lv.note = "the waveform is constant; no edge and no levels"
+        return lv
+
+    if abs(y_tail - y0) >= PULSE_RETURN_FRAC * ptp:
+        lv.y1 = y_tail
+        lv.kind = "step"
+        lv.i_edge = 0
+        lv.monotone = _is_monotone(vals, 0, n - 1, y_tail - y0, ptp)
+        return lv
+
+    # -- returning waveform: measure the first edge --------------------------
+    dev = [abs(v - y0) if math.isfinite(v) else 0.0 for v in vals]
+    dmax = max(dev)
+    if dmax <= 0.0:
+        lv.y1 = y0
+        lv.kind = "flat"
+        return lv
+    i_half = next(i for i in range(n) if dev[i] >= 0.5 * dmax)
+    d = 1.0 if vals[i_half] > y0 else -1.0
+    i_ret = n
+    for i in range(i_half + 1, n):
+        if math.isfinite(vals[i]) and d * (vals[i] - y0) < 0.5 * dmax:
+            i_ret = i
+            break
+    j = min(i_ret - 1, n - 1)
+    while j > i_half and d * (vals[j] - vals[j - 1]) < 0.0:
+        j -= 1
+    i_end = max(j, i_half)
+    m = max(1, int((i_end - i_half + 1) * frac))
+    lv.y1 = sum(vals[i_end - m + 1:i_end + 1]) / m
+    lv.kind = "pulse"
+    lv.i_edge = i_half
+    lv.i_end = i_end
+    lv.monotone = _is_monotone(vals, 0, i_end, lv.y1 - y0, ptp)
+    lv.note = (
+        "the waveform RETURNS to its starting level, so it is a pulse or a "
+        "periodic drive, not a step. Every level is taken from the FIRST edge: "
+        f"base {lv.y0:.6g}, top {lv.y1:.6g} (sample {i_end} of {n}), and the "
+        "return edge is outside the measurement region. The mean of the tail "
+        "of the record, which a step measurement would use as the final level, "
+        f"is {y_tail:.6g} -- within "
+        f"{100.0 * abs(y_tail - y0) / ptp:.3g} pct of the peak-to-peak "
+        "excursion of the starting level, which is what gives a pulse away."
+    )
+    return lv
+
+
+def _is_monotone(y: Sequence[float], i0: int, i1: int, direction: float,
+                 ptp: float) -> bool:
+    """True when y never reverses `direction` by more than 1 ppm of `ptp`."""
+    if direction == 0.0:
+        return True
+    d = 1.0 if direction > 0 else -1.0
+    slack = MONOTONE_TOL_FRAC * ptp
+    prev: Optional[float] = None
+    for i in range(max(0, i0), min(i1, len(y) - 1) + 1):
+        v = float(y[i])
+        if not math.isfinite(v):
+            continue
+        if prev is not None and d * (v - prev) < -slack:
+            return False
+        prev = v
+    return True
+
+
 def crossing_time(t: Sequence[float], y: Sequence[float], level: float,
-                  start_index: int = 0, direction: int = 0) -> Optional[float]:
-    """First time at or after start_index where y crosses level, interpolated."""
+                  start_index: int = 0, direction: int = 0,
+                  stop_index: Optional[int] = None) -> Optional[float]:
+    """First time at or after start_index where y crosses level, interpolated.
+
+    `stop_index` (inclusive) bounds the search, which is how the pulse metrics
+    stay inside the first edge instead of finding the same level again on the
+    way back down.
+    """
     n = min(len(t), len(y))
+    if stop_index is not None:
+        n = min(n, int(stop_index) + 1)
     for i in range(max(0, start_index), n - 1):
         a, b = float(y[i]), float(y[i + 1])
         falling, rising = _seg_crosses(a, b, level)
@@ -691,26 +1227,30 @@ def time_to_fraction(t: Sequence[float], y: Sequence[float],
                      frac: float) -> Optional[float]:
     """Time at which y first reaches `frac` of its total excursion.
 
-    Measured from the time origin of the vector, using the settled initial and
-    final levels as the 0 pct and 100 pct references.
+    Measured from the time origin of the vector, using the base and top levels
+    of the FIRST EDGE (see waveform_levels) as the 0 pct and 100 pct
+    references.
     """
-    y0, y1 = settled_levels(y)
-    if y1 == y0:
+    lv = waveform_levels(y)
+    if lv.y1 == lv.y0:
         return None
-    level = y0 + frac * (y1 - y0)
-    direction = 1 if y1 > y0 else -1
-    return crossing_time(t, y, level, direction=direction)
+    level = lv.y0 + frac * (lv.y1 - lv.y0)
+    direction = 1 if lv.y1 > lv.y0 else -1
+    return crossing_time(t, y, level, direction=direction,
+                         stop_index=lv.i_end)
 
 
 def rise_time(t: Sequence[float], y: Sequence[float],
               lo: float = 0.1, hi: float = 0.9) -> Optional[float]:
     """10 pct to 90 pct rise time of the first rising edge."""
-    y0, y1 = settled_levels(y)
-    if y1 <= y0:
+    lv = waveform_levels(y)
+    if lv.y1 <= lv.y0:
         return None
-    span = y1 - y0
-    t_lo = crossing_time(t, y, y0 + lo * span, direction=1)
-    t_hi = crossing_time(t, y, y0 + hi * span, direction=1)
+    span = lv.y1 - lv.y0
+    t_lo = crossing_time(t, y, lv.y0 + lo * span, direction=1,
+                         stop_index=lv.i_end)
+    t_hi = crossing_time(t, y, lv.y0 + hi * span, direction=1,
+                         stop_index=lv.i_end)
     if t_lo is None or t_hi is None:
         return None
     return t_hi - t_lo
@@ -719,29 +1259,43 @@ def rise_time(t: Sequence[float], y: Sequence[float],
 def fall_time(t: Sequence[float], y: Sequence[float],
               lo: float = 0.1, hi: float = 0.9) -> Optional[float]:
     """90 pct to 10 pct fall time of the first falling edge."""
-    y0, y1 = settled_levels(y)
-    if y1 >= y0:
+    lv = waveform_levels(y)
+    if lv.y1 >= lv.y0:
         return None
-    span = y0 - y1
-    t_hi = crossing_time(t, y, y1 + hi * span, direction=-1)
-    t_lo = crossing_time(t, y, y1 + lo * span, direction=-1)
+    span = lv.y0 - lv.y1
+    t_hi = crossing_time(t, y, lv.y1 + hi * span, direction=-1,
+                         stop_index=lv.i_end)
+    t_lo = crossing_time(t, y, lv.y1 + lo * span, direction=-1,
+                         stop_index=lv.i_end)
     if t_lo is None or t_hi is None:
         return None
     return t_lo - t_hi
 
 
 def overshoot_pct(y: Sequence[float]) -> Optional[float]:
-    """Peak overshoot past the settled final level, in percent of the step."""
+    """Peak overshoot past the settled level, in percent of the step.
+
+    A waveform that never reverses direction has NO overshoot, and this returns
+    exactly 0.0 for it. It used to compare max(y) against the mean of the tail,
+    which on any still-settling exponential is a little below the last sample,
+    so a plain RC step was reported as overshooting by a few tenths of a
+    percent that were never there.
+    """
     if not y:
         return None
-    y0, y1 = settled_levels(y)
-    if y1 == y0:
+    lv = waveform_levels(y)
+    if lv.y1 == lv.y0:
         return None
-    if y1 > y0:
-        peak = max(float(v) for v in y)
-        return 100.0 * (peak - y1) / (y1 - y0)
-    trough = min(float(v) for v in y)
-    return 100.0 * (y1 - trough) / (y0 - y1)
+    if lv.monotone:
+        return 0.0
+    d = 1.0 if lv.y1 > lv.y0 else -1.0
+    region = [float(v) for v in y[:lv.i_end + 1] if math.isfinite(float(v))]
+    if not region:
+        return None
+    past = max(d * (v - lv.y1) for v in region)
+    if past <= 0.0:
+        return 0.0
+    return 100.0 * past / abs(lv.y1 - lv.y0)
 
 
 def settling_time(t: Sequence[float], y: Sequence[float],
@@ -757,30 +1311,39 @@ def settling_time(t: Sequence[float], y: Sequence[float],
     t[-1] for exactly that waveform, which reads as "settles at the end of the
     simulation" instead of "does not settle". At least two consecutive in-band
     samples are required.
+
+    On a pulse the band, the level and the search all belong to the FIRST
+    plateau. Referring them to the mean of the tail of the record instead is
+    self-referential: the tail is inside its own band by construction, so a
+    waveform that never settles at all still reports a settling time.
     """
     n = min(len(t), len(y))
     if n == 0:
         return None
-    y0, y1 = settled_levels(y)
-    span = abs(y1 - y0)
+    lv = waveform_levels(y)
+    span = abs(lv.y1 - lv.y0)
     if span == 0.0:
         return None
     band = tol * span
-    for i in range(n - 1, -1, -1):
-        if abs(float(y[i]) - y1) > band:
-            if i + 1 >= n - 1:
-                return None  # never settles inside the simulated window
+    last = min(lv.i_end, n - 1)
+    for i in range(last, -1, -1):
+        if abs(float(y[i]) - lv.y1) > band:
+            if i + 1 >= last:
+                return None  # never settles inside the measured region
             return float(t[i + 1])
     return float(t[0])
 
 
 def slew_rate(t: Sequence[float], y: Sequence[float]) -> Optional[float]:
     """10-90 chord slew rate in volts per second (units per second)."""
-    tr = rise_time(t, y)
+    lv = waveform_levels(y)
+    if lv.y1 > lv.y0:
+        tr = rise_time(t, y)
+    else:
+        tr = fall_time(t, y)
     if tr is None or tr <= 0.0:
         return None
-    y0, y1 = settled_levels(y)
-    return 0.8 * (y1 - y0) / tr
+    return 0.8 * abs(lv.y1 - lv.y0) / tr * (1.0 if lv.y1 > lv.y0 else -1.0)
 
 
 def prop_delay(t: Sequence[float], y_in: Sequence[float],
@@ -796,20 +1359,27 @@ def prop_delay(t: Sequence[float], y_in: Sequence[float],
 def tran_metrics(t: Sequence[float], y: Sequence[float]) -> dict[str, Any]:
     """All single-waveform transient metrics at once.
 
-    "notes" carries the reason for anything the data does not define, the same
-    way ac_metrics does.
+    "notes" carries the reason for anything the data does not define, and the
+    reference levels every other number is relative to, the same way ac_metrics
+    does. y_initial/y_final are the BASE and TOP of the first edge; on a pulse
+    y_final is the plateau of that edge, NOT the level at the end of the
+    simulation, and notes["levels"] says so.
     """
-    y0, y1 = settled_levels(y)
+    lv = waveform_levels(y)
     st = settling_time(t, y)
     notes: dict[str, str] = {}
-    if st is None and len(y) >= 2 and y1 != y0:
+    if lv.note:
+        notes["levels"] = lv.note
+    if st is None and len(y) >= 2 and lv.y1 != lv.y0:
         notes["settling_time"] = (
             "the waveform is still outside the settling band at the end of the "
-            "simulated window, so it never settles inside it; extend tstop"
+            + ("first pulse" if lv.kind == "pulse" else "simulated window")
+            + ", so it never settles inside it; extend tstop"
         )
     return {
-        "y_initial": y0,
-        "y_final": y1,
+        "y_initial": lv.y0,
+        "y_final": lv.y1,
+        "waveform_kind": lv.kind,
         "rise_time": rise_time(t, y),
         "fall_time": fall_time(t, y),
         "overshoot_pct": overshoot_pct(y),
@@ -864,24 +1434,75 @@ class SupplyCurrentReport:
         return bool(self.warnings)
 
 
-def _parse_source_cards(netlist: str) -> tuple[dict[str, float], list[str]]:
-    """(voltage source name -> its DC value, independent current source names).
+# A transient source with no explicit DC value operates, in .op and .dc, at the
+# value its waveform has at t = 0. That value is a specific argument of each
+# waveform function, and it is knowledge, not a guess. Anything not listed here
+# is UNKNOWN (NaN), which keeps the source as a possible supply rather than
+# excluding a rail on a guess.
+_TRAN_FUNC_VALUE_INDEX = {
+    "sin": 0,      # SIN(vo va freq td theta)      -> offset
+    "sine": 0,
+    "pulse": 0,    # PULSE(v1 v2 td tr tf pw per)  -> initial value
+    "exp": 0,      # EXP(v1 v2 td1 tau1 td2 tau2)  -> initial value
+    "sffm": 0,     # SFFM(vo va fc mdi fs)         -> offset
+    "pwl": 1,      # PWL(t1 v1 t2 v2 ...)          -> the value at t1
+}
+_TRAN_FUNC_RE = re.compile(
+    r"\b(sin|sine|pulse|exp|sffm|pwl)\b\s*\(?([^)]*)", re.IGNORECASE)
+
+
+@dataclass
+class DeckSources:
+    """Every independent source in a deck, WITH ITS SUBCIRCUIT SCOPE.
+
+    A .subckt body is not top level. Parsing it as if it were lets a 0 V
+    ammeter inside a block overwrite a same-named rail at the top, and ngspice
+    really does allow both to be called V1: the branch vectors are 'v1#branch'
+    and 'v.x1.v1#branch', two different currents. Flattening them made the
+    adapter exclude the REAL 1.8 mA rail as "declared DC 0" and keep the 1.8 uA
+    ammeter, reporting a supply current 1000x low with an empty warning list.
+    """
+
+    top: dict[str, float] = field(default_factory=dict)
+    """Top-level voltage source name -> DC value (NaN when unreadable)."""
+
+    subckt_v: dict[str, dict[str, float]] = field(default_factory=dict)
+    """subckt name -> {local voltage source name -> DC value}."""
+
+    instances: dict[str, str] = field(default_factory=dict)
+    """Top-level X instance name -> the subckt it instantiates."""
+
+    subckt_x: dict[str, dict[str, str]] = field(default_factory=dict)
+    """subckt name -> {local X instance name -> the subckt it instantiates}."""
+
+    isources: list[str] = field(default_factory=list)
+    """Independent current sources, top level and inside instantiated subckts."""
+
+    elements: set[str] = field(default_factory=set)
+    """Every element card name in the deck, at any level of hierarchy."""
+
+
+def parse_deck_sources(netlist: str) -> DeckSources:
+    """Read the independent sources out of a deck, keeping subcircuit scope.
 
     A deliberately small SPICE reader: it only needs the element letter, the
-    name, and the DC value of V cards. Comments, continuations and .control
-    blocks are skipped.
+    name, the DC value of V cards, and which subcircuit each X card names.
+    Comments, continuations and .control blocks are skipped.
 
     The DC value comes back as NaN only when the card names a value that
     cannot be read (an unusual unit suffix, a parameter expression). NaN means
     "unknown", and the caller never excludes an unknown source -- dropping a
     real supply is a much worse failure than keeping a stimulus source whose
-    branch current is zero anyway. A card with no numeric value at all
-    ("Vin in 0 AC 1", "Vin in 0 PULSE(0 1 ...)", "V1 a b") has a DC value of
-    exactly 0 by SPICE's own rules, which is knowledge, not a guess.
+    branch current is zero anyway. A card with no value at all ("V1 a b") or an
+    AC-only stimulus ("Vin in 0 AC 1") has a DC value of exactly 0 by SPICE's
+    own rules. A card carrying only a transient waveform ("Vdd vdd 0
+    PULSE(1.8 0 ...)") operates at the value that waveform has at t = 0 --
+    1.8 V, NOT 0 V. Reading those as 0 excluded real rails declared with SIN,
+    PULSE, EXP or PWL as though they were sense sources.
     """
-    vsources: dict[str, float] = {}
-    isources: list[str] = []
+    deck = DeckSources()
     in_control = False
+    scope: Optional[str] = None
     for raw in netlist.splitlines():
         line = raw.strip()
         if not line:
@@ -893,31 +1514,116 @@ def _parse_source_cards(netlist: str) -> tuple[dict[str, float], list[str]]:
         if low.startswith(".endc"):
             in_control = False
             continue
-        if in_control or line[0] in "*+.;":
+        if in_control:
+            continue
+        if low.startswith(".subckt"):
+            toks = line.split()
+            scope = toks[1].lower() if len(toks) > 1 else "?"
+            deck.subckt_v.setdefault(scope, {})
+            deck.subckt_x.setdefault(scope, {})
+            continue
+        if low.startswith(".ends") or low.startswith(".eom"):
+            scope = None
+            continue
+        if line[0] in "*+.;":
             continue
         head = line.split()[0]
-        kind = head[0].lower()
-        if kind not in ("v", "i"):
-            continue
         name = head.lower()
+        kind = name[0]
+        deck.elements.add(name)
+        if kind == "x":
+            toks = line.split()
+            target = None
+            for tok in reversed(toks[1:]):
+                if "=" in tok or tok.lower() == "params:":
+                    continue
+                target = tok.lower()
+                break
+            if target:
+                if scope is None:
+                    deck.instances[name] = target
+                else:
+                    deck.subckt_x[scope][name] = target
+            continue
         if kind == "i":
-            isources.append(name)
+            deck.isources.append(name if scope is None else f"{scope}:{name}")
             continue
-        rest = line[len(head):]
-        if _DC_KEYWORD_RE.search(rest):
-            m = _DC_VALUE_RE.search(rest)
-            # A 'DC' keyword whose value is a parameter expression ({vsup}) is
-            # UNKNOWN, not zero. Never let an unreadable value exclude a rail.
-            vsources[name] = _spice_float(m.group(1)) if m else math.nan
+        if kind != "v":
             continue
-        toks = rest.split()
-        if len(toks) < 3:
-            vsources[name] = 0.0            # "V1 a b" -> DC 0
-        elif toks[2][0].isalpha():
-            vsources[name] = 0.0            # "Vin in 0 AC 1" -> DC 0
+        value = _v_card_dc_value(line[len(head):])
+        if scope is None:
+            deck.top[name] = value
         else:
-            vsources[name] = _spice_float(toks[2])
-    return vsources, isources
+            deck.subckt_v[scope][name] = value
+    return deck
+
+
+def _v_card_dc_value(rest: str) -> float:
+    """The operating-point value of one V card, from everything after its name."""
+    if _DC_KEYWORD_RE.search(rest):
+        m = _DC_VALUE_RE.search(rest)
+        # A 'DC' keyword whose value is a parameter expression ({vsup}) is
+        # UNKNOWN, not zero. Never let an unreadable value exclude a rail.
+        return _spice_float(m.group(1)) if m else math.nan
+    toks = rest.split()
+    if len(toks) < 3:
+        return 0.0                          # "V1 a b" -> DC 0
+    if toks[2][0].isalpha():
+        m = _TRAN_FUNC_RE.search(rest)
+        if m:
+            idx = _TRAN_FUNC_VALUE_INDEX[m.group(1).lower()]
+            args = m.group(2).replace(",", " ").split()
+            if len(args) > idx:
+                return _spice_float(args[idx])
+            return math.nan
+        if toks[2].lower() == "ac":
+            return 0.0                      # "Vin in 0 AC 1" -> DC 0
+        return math.nan                     # an unrecognised keyword: unknown
+    return _spice_float(toks[2])
+
+
+def _parse_source_cards(netlist: str) -> tuple[dict[str, float], list[str]]:
+    """(top-level voltage source name -> DC value, current source names).
+
+    Kept for callers that only care about the top level. New code should use
+    parse_deck_sources(), which keeps the subcircuit hierarchy that a branch
+    vector name like 'v.x1.vsense#branch' has to be resolved against.
+    """
+    deck = parse_deck_sources(netlist)
+    return dict(deck.top), list(deck.isources)
+
+
+def element_letter(branch_name: str) -> str:
+    """The SPICE element letter of a (possibly hierarchical) branch name.
+
+    'v1' -> 'v', and 'v.x1.vsense' -> 'v' as well: ngspice spells a branch
+    inside a subcircuit instance '<letter>.<instance path>.<local name>'.
+    """
+    nm = str(branch_name).lower()
+    return nm.split(".")[0][:1] if "." in nm else nm[:1]
+
+
+def source_dc_value(branch_name: str, deck: DeckSources) -> float:
+    """DC value of the source that produced '<branch_name>#branch'.
+
+    Resolves a hierarchical name through the X instances, so the ammeter in
+    'v.x1.vsense' is looked up in the subcircuit x1 instantiates and NOT in
+    whatever top-level source happens to share its local name.
+    """
+    nm = str(branch_name).lower()
+    if "." not in nm:
+        return deck.top.get(nm, math.nan)
+    parts = nm.split(".")
+    local = parts[-1]
+    scope_v = deck.top
+    scope_x = deck.instances
+    for inst in parts[1:-1]:
+        sub = scope_x.get(inst)
+        if sub is None:
+            return math.nan
+        scope_v = deck.subckt_v.get(sub, {})
+        scope_x = deck.subckt_x.get(sub, {})
+    return scope_v.get(local, math.nan)
 
 
 def _spice_float(tok: Optional[str]) -> float:
@@ -1005,22 +1711,42 @@ def supply_current_report(op_points: dict[str, float],
     # -- no explicit list: classify what is there -----------------------------
     candidates: list[str] = []
     for nm, val in branches.items():
-        if nm[:1] == "v":
+        if element_letter(nm) == "v":
             candidates.append(nm)
         else:
             rep.excluded[nm] = (
-                f"element letter '{nm[:1]}' is not an independent voltage "
-                "source, so SPICE cannot be reporting a supply rail here"
+                f"element letter '{element_letter(nm)}' is not an independent "
+                "voltage source, so SPICE cannot be reporting a supply rail here"
             )
 
     if netlist:
-        vsources, isources = _parse_source_cards(netlist)
+        deck = parse_deck_sources(netlist)
+        isources = deck.isources
         for nm in list(candidates):
-            if vsources.get(nm, math.nan) == 0.0:
+            if source_dc_value(nm, deck) == 0.0:
                 candidates.remove(nm)
                 rep.excluded[nm] = (
                     "declared DC 0 in the netlist: this is a 0 V sense source "
                     "or an AC-only stimulus, not a supply"
+                )
+        # A dual supply carries ONE current: it leaves the positive rail,
+        # goes through the circuit, and comes back through the negative rail.
+        # Summing both magnitudes counts it twice -- 1.8 V and -1.8 V across
+        # 3.6 kOhm reported 2.000 mA against a true 1.000 mA -- and a design
+        # drawing 1.8 mA against a 2 mA budget was scored at 3.6 mA and failed.
+        # The netlist knows the polarities, so the negative rails are named as
+        # the return path they are and are not added in.
+        positive = [nm for nm in candidates if source_dc_value(nm, deck) > 0.0]
+        negative = [nm for nm in candidates if source_dc_value(nm, deck) < 0.0]
+        if positive and negative:
+            for nm in negative:
+                candidates.remove(nm)
+                rep.excluded[nm] = (
+                    f"declared DC {source_dc_value(nm, deck):g} in the "
+                    "netlist: a NEGATIVE rail is the return path of the "
+                    "positive rail(s), not a second supply. Its current is "
+                    "the same current and adding it would count the supply "
+                    "twice"
                 )
         if isources:
             rep.warnings.append(
@@ -1060,6 +1786,27 @@ def supply_current_report(op_points: dict[str, float],
             "branch(es) " + ", ".join(small) + " carry less than a thousandth "
             "of the largest branch; that is the shape of a sense source, and a "
             "sense source is not a supply"
+        )
+    # The "much smaller than the largest" test only catches a sense source in
+    # a branch of its own. The two shapes that DOUBLE the answer look nothing
+    # like that: a supply ammeter in series with the rail carries the FULL rail
+    # current, and the two halves of a dual supply carry the same current in
+    # opposite directions. Both make the sum exactly 2x, and neither can be
+    # told from two genuine rails without the deck, so both are named here.
+    twins = sorted(
+        nm for nm in candidates
+        if biggest > 0.0 and nm != max(candidates, key=lambda x: abs(branches[x]))
+        and abs(abs(branches[nm]) - biggest) <= 1e-3 * biggest
+    )
+    if twins:
+        rep.warnings.append(
+            "branch(es) " + ", ".join(twins) + " carry the same current as the "
+            "largest branch to within 0.1 pct. That is the shape of a supply "
+            "AMMETER in series with the rail, or of the two halves of a dual "
+            "supply -- in both cases it is ONE current and summing it twice "
+            "reports exactly 2x the real supply current. Pass `netlist` so the "
+            "polarities and the 0 V sense sources can be read, or name the "
+            "supplies via `sources`"
         )
 
     rep.sources = sorted(candidates)

@@ -5,6 +5,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar
 from pydantic import BaseModel, Field
 
+from asic_ai import serialization
+
 T = TypeVar("T", bound="Trajectory")
 
 class ToolCall(BaseModel):
@@ -43,12 +45,12 @@ class Trajectory(BaseModel):
                         "type": "function",
                         "function": {
                             "name": step.tool_call.name,
-                            "arguments": json.dumps(step.tool_call.arguments)
+                            "arguments": serialization.dumps(step.tool_call.arguments)
                         }
                     }
                 ]
             if step.tool_result is not None:
-                msg["content"] = json.dumps(step.tool_result)
+                msg["content"] = serialization.dumps(step.tool_result)
                 msg["tool_call_id"] = step.tool_call.call_id if step.tool_call else ""
             chat.append(msg)
         return chat

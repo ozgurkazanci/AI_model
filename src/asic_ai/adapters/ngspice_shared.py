@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import ctypes
 import logging
+import math
 import os
 import re
 from dataclasses import dataclass, field
@@ -447,6 +448,44 @@ def _real(values: Sequence) -> list[float]:
 
 def _is_complex(values: Sequence) -> bool:
     return bool(values) and isinstance(values[0], complex)
+
+
+def _finite_pairs(x: Sequence[float], y: Sequence[float],
+                  label: str = "") -> tuple[list[float], list[float], int]:
+    """(x, y, dropped) keeping only the samples where BOTH are finite.
+
+    A pydantic result is a SERIALIZATION boundary. The metric layer is right to
+    use -inf for a magnitude that is genuinely zero and NaN for a phase that
+    genuinely does not exist -- those are ordered, arithmetic-safe values and
+    every scan in measure.py handles them. But json.dumps writes them as
+    -Infinity and NaN, which is not JSON: json.loads with a strict
+    parse_constant, jq, JavaScript and the HuggingFace datasets loader all
+    reject it, and rl_env hands exactly that text to the model and on into
+    trajectories and SFT files. On an ordinary deck -- one AC input and one
+    DC-only supply rail -- three of seven AC signals are non-finite at all 61
+    samples, so this is the common case and not an edge case.
+
+    Dropping the sample rather than flooring it keeps the pair honest: the
+    signal is reported at the frequencies where it is defined, with its own
+    x_values, and nothing downstream has to guess what -6000 dB meant.
+    """
+    n = min(len(x), len(y))
+    xs: list[float] = []
+    ys: list[float] = []
+    for i in range(n):
+        xv, yv = float(x[i]), float(y[i])
+        if math.isfinite(xv) and math.isfinite(yv):
+            xs.append(xv)
+            ys.append(yv)
+    dropped = n - len(xs)
+    if dropped and label:
+        log.warning(
+            "%s: %d of %d samples are not finite and are dropped from the "
+            "result; a non-finite float cannot be serialised as JSON and would "
+            "reach a trajectory and an SFT file as -Infinity or NaN",
+            label, dropped, n,
+        )
+    return xs, ys, dropped
 
 
 # ---------------------------------------------------------------------------
@@ -878,7 +917,15 @@ class NgspiceSharedAdapter(SimulatorAdapter):
         op_points: dict[str, float] = {}
         for name, data in run.vectors(op_plot).items():
             if len(data) == 1:
-                op_points[name] = _real(data)[0]
+                v = _real(data)[0]
+                if not math.isfinite(v):
+                    log.warning(
+                        "operating point %r is %r, which is not a number and "
+                        "cannot be serialised as JSON; it is left out of the "
+                        "result. The run did not converge here.", name, v,
+                    )
+                    continue
+                op_points[name] = v
 
         sweeps: dict[str, SignalData] = {}
         vecs = run.vectors(dc_plot)
@@ -895,9 +942,12 @@ class NgspiceSharedAdapter(SimulatorAdapter):
                 for name, data in vecs.items():
                     if name == x_name or len(data) != len(x_values):
                         continue
-                    sweeps[name] = SignalData(name=name,
-                                              x_values=list(x_values),
-                                              y_values=_real(data))
+                    xs, ys, _ = _finite_pairs(x_values, _real(data),
+                                              f"DC sweep {name!r}")
+                    if not xs:
+                        continue
+                    sweeps[name] = SignalData(name=name, x_values=xs,
+                                              y_values=ys)
         if not op_points and not sweeps:
             return None
         return DCResult(op_points=op_points, sweeps=sweeps)
@@ -930,12 +980,38 @@ class NgspiceSharedAdapter(SimulatorAdapter):
                 continue
             values = [complex(v) if not isinstance(v, complex) else v for v in data]
             gain_db, phase_deg = measure.transfer_function(values, divisor)
+            # A sample is kept only where BOTH the magnitude and the phase are
+            # finite, so vdb() and vp() always share an x axis and neither can
+            # carry a -inf or a NaN into the result. A vector with no AC
+            # content at all -- a DC-only supply rail -- is -inf everywhere and
+            # is dropped entirely rather than reported as a signal of nothing.
+            keep = [i for i in range(len(freqs))
+                    if math.isfinite(gain_db[i]) and math.isfinite(phase_deg[i])
+                    and math.isfinite(freqs[i])]
+            keep_f = [float(freqs[i]) for i in keep]
+            keep_g = [float(gain_db[i]) for i in keep]
+            keep_p = [float(phase_deg[i]) for i in keep]
+            dropped_g = len(freqs) - len(keep)
+            if not keep_f:
+                log.warning(
+                    "AC vector %r has no finite transfer function at any of "
+                    "%d frequencies (its response is identically zero, or the "
+                    "stimulus is); it is left out of the result rather than "
+                    "reported as -inf dB", name, len(freqs),
+                )
+                continue
+            if dropped_g:
+                log.warning(
+                    "AC vector %r: %d of %d samples have no transfer function "
+                    "and are dropped; the signal carries its own x_values",
+                    name, dropped_g, len(freqs),
+                )
             key_m = f"vdb({name})"
             key_p = f"vp({name})"
-            signals[key_m] = SignalData(name=key_m, x_values=list(freqs),
-                                        y_values=gain_db)
-            signals[key_p] = SignalData(name=key_p, x_values=list(freqs),
-                                        y_values=phase_deg)
+            signals[key_m] = SignalData(name=key_m, x_values=list(keep_f),
+                                        y_values=keep_g)
+            signals[key_p] = SignalData(name=key_p, x_values=list(keep_f),
+                                        y_values=keep_p)
         return ACResult(frequencies=freqs, signals=signals)
 
     @staticmethod
@@ -951,9 +1027,12 @@ class NgspiceSharedAdapter(SimulatorAdapter):
         for name, data in vecs.items():
             if name == "time" or len(data) != len(t):
                 continue
-            signals[name] = SignalData(name=name, x_values=list(t),
-                                       y_values=_real(data))
-        return TranResult(time=t, signals=signals)
+            xs, ys, _ = _finite_pairs(t, _real(data), f"transient {name!r}")
+            if not xs:
+                continue
+            signals[name] = SignalData(name=name, x_values=xs, y_values=ys)
+        return TranResult(time=[v for v in t if math.isfinite(v)],
+                          signals=signals)
 
     @staticmethod
     def _noise_plots(run: _SimRun) -> tuple[Optional[str], Optional[str]]:
@@ -1028,12 +1107,14 @@ class NgspiceSharedAdapter(SimulatorAdapter):
         onoise = vecs.get("onoise_spectrum")
         if inoise is None or onoise is None:
             raise NgspiceError("noise(): spectrum plot lacks inoise/onoise vectors")
+        fi, yi, _ = _finite_pairs(freqs, _real(inoise), "inoise_spectrum")
+        fo, yo, _ = _finite_pairs(freqs, _real(onoise), "onoise_spectrum")
         return NoiseResult(
-            frequencies=freqs,
-            input_noise=SignalData(name="inoise_spectrum", x_values=list(freqs),
-                                   y_values=_real(inoise)),
-            output_noise=SignalData(name="onoise_spectrum", x_values=list(freqs),
-                                    y_values=_real(onoise)),
+            frequencies=[v for v in freqs if math.isfinite(v)],
+            input_noise=SignalData(name="inoise_spectrum", x_values=fi,
+                                   y_values=yi),
+            output_noise=SignalData(name="onoise_spectrum", x_values=fo,
+                                    y_values=yo),
         )
 
     def stb(self, netlist: str, params: Any = None) -> StabilityResult:
@@ -1043,14 +1124,24 @@ class NgspiceSharedAdapter(SimulatorAdapter):
         broken-loop method: the deck must already break the loop and drive it
         with an AC source. The loop response is out/in, taken from
         options['loop_out'] (default 'out') divided by options['loop_in']
-        (default 'in' when that vector exists). Phase is unwrapped and its DC
-        value normalised to ~0 deg so an inverting loop does not report a phase
-        margin that is 180 deg wrong.
+        (default 'in' when that vector exists).
+
+        The phase is unwrapped, and a whole 180 deg inversion is removed only
+        when the phase at the BOTTOM of the sweep departs by 180 deg from what
+        the magnitude slope there implies (measure.phase_inversion_shift). It
+        is NOT normalised to 0 deg at any single sample: doing that at the
+        peak-gain sample fabricated an inversion on every resonant loop, which
+        turned a phase margin of -68.2 deg into +111.8 deg and, by destroying
+        the -180 deg crossing, an unstable loop into an infinite gain margin.
+
+        phase_margin is taken at the LOOP CLOSURE -- the last frequency at
+        which the gain is above 0 dB -- not at the first 0 dB crossing.
 
         Raises when the loop gain never crosses 0 dB, because the phase margin
-        is then undefined and returning 0.0 would be a fabrication. When the
-        phase never reaches -180 deg the gain margin is infinite and is
-        reported as float('inf').
+        is then undefined and returning 0.0 would be a fabrication. float('inf')
+        is reported for the gain margin ONLY when ac_metrics says the phase
+        never reaches -180 deg at all; a phase that sits at or below -180 deg
+        gets a real, finite, negative margin.
         """
         opts = _options(params)
         out_name = str(opts.get("loop_out", "out"))
@@ -1088,11 +1179,12 @@ class NgspiceSharedAdapter(SimulatorAdapter):
                       if peak is not None and f_peak is not None else "")
             raise NgspiceError(f"stb(): no phase margin. {reason}{detail}.")
         gm = m["gain_margin"]
+        lf, lg, _ = _finite_pairs(freqs, gain_db, "stb loop gain")
         return StabilityResult(
             phase_margin=float(m["phase_margin"]),
             gain_margin=float(gm) if gm is not None else float("inf"),
-            loop_gain=SignalData(name="loop_gain_db", x_values=list(freqs),
-                                 y_values=gain_db),
+            loop_gain=SignalData(name="loop_gain_db", x_values=lf,
+                                 y_values=lg),
         )
 
     def corners(self, netlist: str, pvt_list: Sequence[Any]) -> list[CornerResult]:
@@ -1214,7 +1306,16 @@ class NgspiceSharedAdapter(SimulatorAdapter):
 
     @staticmethod
     def _summarize_run(run: _SimRun) -> dict[str, Any]:
-        """Generic per-run scalar summary used by mc()."""
+        """Generic per-run scalar summary used by mc().
+
+        The sweep axis is the vector ngspice DESIGNATED as the axis
+        (_dc_sweep_axis), not "v-sweep if present else time". That guess is the
+        one _build_dc had to stop making: a '.dc temp -40 125' run designates
+        'temp-sweep', a '.dc i1 ...' run designates 'i1-sweep', and neither is
+        'v-sweep', so the axis was summarised as though it were a measured
+        circuit quantity and every Monte Carlo result carried a
+        'temp-sweep.min = -40' that reads as a node voltage.
+        """
         metrics: dict[str, Any] = {}
         op_plot = run.find_plot("op")
         for name, data in run.vectors(op_plot).items():
@@ -1223,7 +1324,7 @@ class NgspiceSharedAdapter(SimulatorAdapter):
         for prefix in ("dc", "tran"):
             plot = run.find_plot(prefix)
             vecs = run.vectors(plot)
-            axis = "v-sweep" if "v-sweep" in vecs else "time"
+            axis = _dc_sweep_axis(vecs) if prefix == "dc" else "time"
             for name, data in vecs.items():
                 if name == axis or not data:
                     continue
@@ -1301,17 +1402,23 @@ class NgspiceSharedAdapter(SimulatorAdapter):
         must be an element card in that deck. A result carried over from an
         earlier, different circuit fails this and gets no netlist rather than
         the wrong one.
+
+        A branch INSIDE a subcircuit instance is spelled hierarchically --
+        'v.x1.vsense#branch' -- and no deck has an element card called that.
+        The match is therefore on the LOCAL name (the last dotted component)
+        against every element card at any level of hierarchy, including
+        subcircuit bodies. Comparing the hierarchical name against top-level
+        cards only made the deck fail to match its OWN result the moment a
+        subcircuit held a V or an L, and a rejected deck means no netlist,
+        which means the 0 V ammeter inside that subcircuit is summed as if it
+        were a second supply: exactly 2x.
         """
         netlist = getattr(self, "_last_netlist", "") or ""
         if not netlist:
             return None
-        wanted = {k.split("#")[0].lower()
+        wanted = {k.split("#")[0].lower().split(".")[-1]
                   for k in result.op_points if "#branch" in k.lower()}
         if not wanted:
             return None
-        present: set[str] = set()
-        for raw in netlist.splitlines():
-            line = raw.strip()
-            if line and line[0] not in "*+.;":
-                present.add(line.split()[0].lower())
+        present = measure.parse_deck_sources(netlist).elements
         return netlist if wanted <= present else None

@@ -42,9 +42,9 @@ Common causes:
 Let me check the netlist for floating nodes:
 
 <tool_call>
-  {"name": "netlist.get", "arguments": {"circuit": "ota_failing"}}
+  {"name": "lint.check", "arguments": {"netlist": ".subckt ota vin_p vin_n vout vdd vss\\nM1 net1 vin_p tail vss nmos w=10u l=0.5u\\nM2 net2 vin_n tail vss nmos w=10u l=0.5u\\nM3 net1 net1 vdd vdd pmos w=20u l=0.5u\\nM4 net2 net1 vdd vdd pmos w=20u l=0.5u\\nM5 tail vbias vss vss nmos w=20u l=1u\\n.ends"}}
 </tool_call>"""},
-            {"role": "tool", "content": json.dumps({"netlist": ".subckt ota vin_p vin_n vout vdd vss\nM1 net1 vin_p tail vss nmos w=10u l=0.5u\nM2 net2 vin_n tail vss nmos w=10u l=0.5u\nM3 net1 net1 vdd vdd pmos w=20u l=0.5u\nM4 net2 net1 vdd vdd pmos w=20u l=0.5u\nM5 tail vbias vss vss nmos w=20u l=1u\n.ends"})},
+            {"role": "tool", "content": json.dumps({"errors": [{"node": "vbias", "line": 6, "message": "Node 'vbias' has no DC path to ground: driven by no source, only connected to gate of M5.", "severity": "error"}], "passed": False})},
             {"role": "assistant", "content": """Found the problem! The `vbias` node has no DC path - it's floating.
 
 The tail current source M5 has its gate connected to `vbias` but there's no voltage source or bias circuit driving it.
@@ -237,11 +237,7 @@ Strategy:
 
 3. **Prevention**: Add density-aware routing constraints
 
-<tool_call>
-  {"name": "report.generate", "arguments": {"type": "drc_summary", "include_fix_suggestions": true}}
-</tool_call>"""},
-            {"role": "tool", "content": json.dumps({"report": "generated", "path": "reports/drc_density_fix.html"})},
-            {"role": "assistant", "content": """DRC fix procedure:
+DRC fix procedure:
 
 ```tcl
 # Step 1: Auto metal fill (handles 142 violations)
@@ -268,45 +264,51 @@ Grounded fill adds parasitic capacitance to signal nets."""}
     examples.append({
         "messages": [
             {"role": "system", "content": build_system_message()},
-            {"role": "user", "content": "LDO passes at TT 27C but fails output regulation at SS -40C. Why?"},
-            {"role": "assistant", "content": """SS corner at -40C is the worst case for LDO regulation because:
-1. Lower gm (slower transistors)
-2. Higher Vth (less headroom)
+            {"role": "user", "content": "LDO passes at TT 27C but fails output regulation at SS 125C. Why?"},
+            {"role": "assistant", "content": """SS corner at 125C is the worst case for LDO regulation because:
+1. Lower gm (slow silicon, and mobility falls as temperature rises)
+2. Lower supply (SS is signed off at the low VDD limit, less headroom)
 3. Lower loop gain -> worse regulation
+
+Sign-off convention: every axis of a corner pushes the SAME way. SS is slow
+silicon at LOW VDD and HOT (125C); FF is fast silicon at HIGH VDD and COLD
+(-40C). Pairing SS with -40C cancels part of the corner against itself and
+understates the real spread.
 
 Let me run corner analysis:
 
 <tool_call>
-  {"name": "sim.corners", "arguments": {"netlist": "ldo_regulator", "corners": ["tt_27", "ss_n40", "ff_125"], "analysis": "ac"}}
+  {"name": "sim.corners", "arguments": {"netlist": "ldo_regulator", "corners": ["tt_27", "ss_125", "ff_n40"], "analysis": "ac"}}
 </tool_call>"""},
-            {"role": "tool", "content": json.dumps({"corners": {"tt_27": {"loop_gain": 55, "ugb": 2e6, "phase_margin": 62}, "ss_n40": {"loop_gain": 32, "ugb": 800e3, "phase_margin": 71}, "ff_125": {"loop_gain": 65, "ugb": 5e6, "phase_margin": 48}}})},
+            {"role": "tool", "content": json.dumps({"corners": {"tt_27": {"loop_gain": 55, "ugb": 2e6, "phase_margin": 62}, "ss_125": {"loop_gain": 32, "ugb": 800e3, "phase_margin": 71}, "ff_n40": {"loop_gain": 65, "ugb": 5e6, "phase_margin": 48}}})},
             {"role": "assistant", "content": """Corner comparison:
 
-| Parameter | TT 27C | SS -40C | FF 125C |
+| Parameter | TT 27C | SS 125C | FF -40C |
 |-----------|--------|---------|---------|
 | Loop gain | 55 dB | 32 dB | 65 dB |
 | UGB | 2 MHz | 800 kHz | 5 MHz |
 | Phase margin | 62 deg | 71 deg | 48 deg |
 
-**Root cause at SS -40C**: Loop gain drops 23 dB (55->32 dB)!
-- gm reduction: ~40% (mobility decreases at low temp for NMOS)
-- Vth increase: ~100mV (less overdrive voltage)
-- ro decrease: output impedance drops
+**Root cause at SS 125C**: Loop gain drops 23 dB (55->32 dB)!
+- gm reduction: ~40% (mobility falls as temperature rises)
+- Headroom loss: SS is signed off at the low VDD limit
+- ro decrease: output impedance drops at high temperature
 
-Fix: Increase error amp bias current at cold corner using PTAT bias:
+Fix: Increase error amp bias current at the hot corner using CTAT-compensated
+bias, so gm does not track mobility down:
 
 <tool_call>
-  {"name": "netlist.patch", "arguments": {"changes": "Replace constant bias with PTAT current: Ibias = Ibias_nom * (T/T0) to compensate gm drop at cold"}}
+  {"name": "netlist.patch", "arguments": {"changes": "Replace constant bias with a constant-gm bias so Ibias rises with temperature and compensates the gm drop at SS 125C"}}
 </tool_call>"""},
             {"role": "tool", "content": json.dumps({"status": "applied", "changes": 1})},
-            {"role": "assistant", "content": """With PTAT bias, gm stays roughly constant across temperature:
+            {"role": "assistant", "content": """With constant-gm bias, gm stays roughly constant across temperature:
 - gm = sqrt(2 * mu * Cox * (W/L) * Id)
-- mu decreases with T, but PTAT Id increases with T
+- mu decreases with T, but the constant-gm bias raises Id with T
 - Net effect: gm variation < 20% across corners
 
-Also fix FF 125C phase margin (48 deg is marginal):
-- Add compensation cap increase at high temp
-- Or use adaptive Miller compensation
+Also fix FF -40C phase margin (48 deg is marginal):
+- FF is fast silicon at high VDD and cold, so gm and UGB are highest there
+- Increase the compensation capacitor, or use adaptive Miller compensation
 
 Design rule: Always simulate all corners BEFORE tapeout.
 Min specs should be met at worst-case corner, not typical."""}
@@ -418,9 +420,9 @@ Trade-offs:
 Let me check the testbench:
 
 <tool_call>
-  {"name": "netlist.get", "arguments": {"circuit": "amp_testbench"}}
+  {"name": "lint.check", "arguments": {"netlist": "Vin in 0 DC 0.9\\n.ac dec 20 1 1G\\nX1 in out vdd vss amp\\nVdd vdd 0 1.8\\nCL out 0 1p"}}
 </tool_call>"""},
-            {"role": "tool", "content": json.dumps({"netlist": "Vin in 0 DC 0.9\n.ac dec 20 1 1G\nX1 in out vdd vss amp\nVdd vdd 0 1.8\nCL out 0 1p"})},
+            {"role": "tool", "content": json.dumps({"errors": [{"node": "Vin", "line": 1, "message": "Source 'Vin' has no AC magnitude but an .ac analysis is requested: AC stimulus is zero.", "severity": "error"}], "passed": False})},
             {"role": "assistant", "content": """Found it! The voltage source `Vin` has `DC 0.9` but **no AC component**.
 
 Should be: `Vin in 0 DC 0.9 AC 1`
