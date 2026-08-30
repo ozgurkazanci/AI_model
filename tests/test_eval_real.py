@@ -165,3 +165,74 @@ def test_baseline_refuses_to_record_without_an_engine(tmp_path, monkeypatch):
     code = baseline.run_baseline(str(TASKS), "test-model", str(out), limit=1)
     assert code == 1
     assert not out.exists(), "nothing may be written when there is no model"
+
+
+# ------------------------------------------------ measure_baseline ----------
+
+def _load_measure_baseline():
+    """Import scripts/measure_baseline.py as a module.
+
+    It must be registered in sys.modules before exec, or @dataclass cannot
+    resolve the module it belongs to.
+    """
+    import importlib.util as iu
+    import sys
+
+    path = REPO_ROOT / "scripts" / "measure_baseline.py"
+    spec = iu.spec_from_file_location("_mb_under_test", path)
+    module = iu.module_from_spec(spec)
+    sys.modules["_mb_under_test"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_measure_baseline_without_an_engine_reports_no_score(monkeypatch):
+    """It was honest as a placeholder; it must stay honest now that it is wired.
+
+    A baseline of zeros recorded as if measured would make every later run look
+    like an improvement, which is worse than recording nothing.
+    """
+    import asyncio
+
+    import eval.runner as er
+
+    mb = _load_measure_baseline()
+    monkeypatch.setattr(er, "_default_engine", lambda: None)
+
+    task = {"id": "t", "category": "analog", "difficulty": "easy",
+            "specs": {"idd": {"max": 100, "unit": "uA"}}}
+    result = asyncio.run(mb.run_task_with_model(task, mb.BaselineConfig()))
+
+    assert result.passed is False
+    assert result.final_score == 0.0
+    assert result.error and "engine" in result.error
+
+
+def test_measure_baseline_drives_the_shared_agent_loop(monkeypatch):
+    """Four callers, one loop. A fifth implementation would be a fifth bug."""
+    import asyncio
+
+    import eval.runner as er
+    from asic_ai.inference.engine import GenerationResult
+
+    class _Engine:
+        def generate(self, messages, **kwargs):
+            return GenerationResult(
+                text='<tool_call>{"name": "pdk.list_devices", "arguments": {}}</tool_call>',
+                prompt_tokens=7, completion_tokens=3)
+
+        def get_token_count(self, text):
+            return len(text) // 4
+
+    mb = _load_measure_baseline()
+    monkeypatch.setattr(er, "_default_engine", lambda: _Engine())
+    monkeypatch.setattr(er, "_default_adapter", _mock_adapter)
+
+    task = {"id": "t", "category": "analog", "difficulty": "easy",
+            "specs": {"idd": {"max": 100, "unit": "uA"}}}
+    result = asyncio.run(mb.run_task_with_model(
+        task, mb.BaselineConfig(max_steps=2)))
+
+    assert result.error is None
+    assert result.steps >= 1, "the loop must actually run"
+    assert result.token_usage["prompt"] > 0, "real token counts, not zeros"

@@ -174,7 +174,9 @@ async def run_task_with_model(
     2. A running simulator (ngspice)
     3. The system prompt from data.format
 
-    For now, returns a placeholder result to establish the pipeline.
+    Drives the shared agent loop. With no engine reachable it still returns
+    passed=False with a reason rather than a score -- a baseline of zeros
+    would make every later run look like an improvement.
     """
     task_id = task.get("id", "unknown")
     category = task.get("category", "unknown")
@@ -185,20 +187,61 @@ async def run_task_with_model(
     start = time.time()
 
     try:
-        # TODO: Replace with actual model + simulator interaction
-        # from asic_ai.inference.runner import InferenceRunner
-        # runner = InferenceRunner(model_path=config.model, ...)
-        # result = runner.run_task(task)
+        from asic_ai.inference.runner import run_agent_loop
+        from eval.runner import _default_adapter, _default_engine
+
+        engine = _default_engine()
+        if engine is None:
+            # Still the honest placeholder: no model means no score, never a
+            # pass. A baseline of zeros would make every later run look like an
+            # improvement.
+            return TaskResult(
+                task_id=task_id,
+                category=category,
+                difficulty=difficulty,
+                passed=False,
+                final_score=0.0,
+                steps=0,
+                wall_time_sec=time.time() - start,
+                error=("no inference engine reachable -- start one with "
+                       "scripts/serve_local.py, or point ASIC_AI_LLAMA_SERVER_URL "
+                       "at an OpenAI-compatible endpoint"),
+            )
+
+        adapter = _default_adapter()
+        if adapter is None:
+            return TaskResult(
+                task_id=task_id, category=category, difficulty=difficulty,
+                passed=False, final_score=0.0, steps=0,
+                wall_time_sec=time.time() - start,
+                error="no simulator adapter available",
+            )
+
+        from asic_ai.reward.reward import RewardFunction
+        from asic_ai.training.rl_env import CircuitDesignEnv
+
+        reward_fn = RewardFunction.from_eval_task(task)
+        env = CircuitDesignEnv(adapter, reward_fn, max_steps=config.max_steps)
+        env.reset(task)
+
+        # The single implementation of the agent loop, shared with
+        # eval/runner.py, agent/loop.py and InferenceRunner.
+        run = run_agent_loop(task, engine, env, max_steps=config.max_steps,
+                             temperature=config.temperature,
+                             max_new_tokens=config.max_tokens)
 
         return TaskResult(
             task_id=task_id,
             category=category,
             difficulty=difficulty,
-            passed=False,
-            final_score=0.0,
-            steps=0,
+            passed=run.passed,
+            final_score=run.final_score,
+            steps=run.steps,
             wall_time_sec=time.time() - start,
-            error="Baseline runner not yet connected to model API. Run with --dry-run to see task summary.",
+            error=run.error,
+            reward_breakdown=run.reward_breakdown,
+            token_usage={"prompt": run.prompt_tokens,
+                         "completion": run.completion_tokens},
         )
     except Exception as e:
         return TaskResult(
