@@ -18,6 +18,12 @@ specs:
     max: 10
     weight: 1.0
     unit: pA/sqrt(Hz)
+    # A noise DENSITY is a value at a frequency. Without one, spec_extract
+    # refuses the metric on any real 1/f-plus-thermal spectrum (correctly --
+    # spectrum[0] is a function of where the sweep was started, not of the
+    # circuit), and a spec that can never be measured is a silent -1.0 on this
+    # task. 100 kHz is inside the TIA's flat band and above its 1/f corner.
+    at_freq: 100.0e3
   idd:
     max: 2
     weight: 1.0

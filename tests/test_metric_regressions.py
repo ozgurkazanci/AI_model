@@ -1226,3 +1226,960 @@ class TestR1SweepStartingAtZeroHertz:
         from_one = self._metrics(adapter, "-1000", ".ac dec 100 1 1e8", "inverting")
         assert at_zero.get("phase_reference") == "dc"
         assert from_one.get("phase_reference") == "bode"
+
+
+# ===========================================================================
+# R2  passband_gain_db was the PEAK gain, which rewards under-damped designs
+# ===========================================================================
+
+def _peaky_amp(f):
+    """35 dB mid-band, AC-coupled at 10 Hz, complex pole pair Q = 2.2 at 9.55 MHz."""
+    a = 10.0 ** (35.0 / 20.0)
+    u = 1j * f / 10.0
+    s = 1j * f / 9.55e6
+    return a * (u / (1 + u)) / (1 + s / 2.2 + s * s)
+
+
+class TestR2PassbandGainIsNotThePeak:
+    """`gain` read the RESONANT PEAK, so the less damped the design the better.
+
+        mid-band gain at 1 MHz        35.0857 dB
+        passband_gain_db reported     42.0783 dB   (the peak at 9.07 MHz)
+
+    Against `gain: {min: 40, unit: dB}` a 35 dB amplifier PASSED, and every
+    step toward a peakier, less stable design raised the reported gain. That is
+    a smooth gradient toward marginally stable amplifiers, which is the worst
+    thing a reward source can hand an RL policy.
+    """
+
+    FREQS = _log_sweep(1e3, 1e9, 400)
+
+    @pytest.fixture
+    def metrics(self):
+        gain_db, phase = _response(self.FREQS, _peaky_amp)
+        return measure.ac_metrics(self.FREQS, gain_db, phase)
+
+    def test_the_probe_really_does_peak(self, metrics):
+        assert metrics["peak_gain_db"] == pytest.approx(42.0783, abs=1e-3)
+        assert metrics["f_peak"] == pytest.approx(9.0678e6, rel=1e-3)
+
+    def test_the_passband_is_the_mid_band_not_the_peak(self, metrics):
+        gain_db, _ = _response(self.FREQS, _peaky_amp)
+        midband = measure.value_at_freq(self.FREQS, gain_db, 1e6)
+        assert midband == pytest.approx(35.0857, abs=1e-3)
+        assert metrics["passband_gain_db"] == pytest.approx(35.0419, abs=1e-3)
+        # The whole point: it is nowhere near the 42.08 dB peak.
+        assert metrics["passband_gain_db"] < 36.0
+
+    def test_the_peaking_is_named_in_the_notes(self, metrics):
+        note = metrics["notes"]["passband_gain_db"]
+        assert "peaking, not gain" in note
+
+    def test_a_35_db_amplifier_no_longer_passes_a_40_db_spec(self):
+        gain_db, phase = _response(self.FREQS, _peaky_amp)
+        ac = {"frequencies": self.FREQS,
+              "signals": {"vdb(out)": {"name": "vdb(out)",
+                                       "x_values": self.FREQS,
+                                       "y_values": gain_db},
+                          "vp(out)": {"name": "vp(out)",
+                                      "x_values": self.FREQS,
+                                      "y_values": phase}}}
+        ext = sx.extract_specs({"gain": {"min": 40, "unit": "dB"}}, ac=ac,
+                               output_signal="out")
+        assert ext.values["gain"] < 40.0          # was 42.07, a false pass
+
+    def test_a_flat_response_still_reports_its_own_level(self):
+        """The guard must not cost the case it was built for."""
+        freqs = _log_sweep(1e3, 1e8, 200)
+        gain_db, phase = _response(freqs, _ac_coupled_40db)
+        m = measure.ac_metrics(freqs, gain_db, phase)
+        assert m["passband_gain_db"] == pytest.approx(40.0, abs=0.01)
+
+
+class TestR2ThePassbandOutsideTheSweepIsRefused:
+    """passband_gain_db was published in the very case the module had refused.
+
+    Low-pass, 60 dB at DC, pole at 1 kHz, swept 100 kHz .. 100 MHz:
+
+        dc_gain_db            None       correctly refused
+        notes[bandwidth_3db]  "refused: ... the passband lies below f_start"
+        passband_gain_db      19.9996 dB  delivered to the reward as `gain`
+
+    because it was assigned BEFORE the refusal. The mirror case -- a high-pass
+    swept a decade below its corner, peak at the LAST sample -- had no refusal
+    branch at all and reported 19.9568 dB for a 40 dB stage.
+    """
+
+    def test_a_low_pass_swept_above_its_pole_refuses(self):
+        freqs = _log_sweep(1e5, 1e8, 200)
+        gain_db, phase = _response(freqs, lambda f: 1000.0 / (1 + 1j * f / 1e3))
+        m = measure.ac_metrics(freqs, gain_db, phase)
+        assert m["low_freq_gain_db"] == pytest.approx(19.9996, abs=1e-3)
+        assert m["dc_gain_db"] is None
+        assert m["passband_gain_db"] is None       # was 19.9996 for a 60 dB amp
+        assert "refused" in m["notes"]["passband_gain_db"]
+        assert "FIRST" in m["notes"]["passband_gain_db"]
+
+    def test_a_high_pass_swept_below_its_corner_refuses_too(self):
+        """The mirror case, which had no refusal branch at all."""
+        freqs = _log_sweep(1e4, 1e5, 200)
+        gain_db, phase = _response(
+            freqs, lambda f: 100.0 * (1j * f / 1e6) / (1 + 1j * f / 1e6))
+        m = measure.ac_metrics(freqs, gain_db, phase)
+        assert m["peak_gain_db"] == pytest.approx(19.9568, abs=1e-3)
+        assert m["passband_gain_db"] is None       # was 19.9568 for a 40 dB stage
+        assert "LAST" in m["notes"]["passband_gain_db"]
+
+    def test_the_refusal_reaches_the_spec_as_a_reason(self):
+        freqs = _log_sweep(1e5, 1e8, 200)
+        gain_db, phase = _response(freqs, lambda f: 1000.0 / (1 + 1j * f / 1e3))
+        ac = {"frequencies": freqs,
+              "signals": {"vdb(out)": {"name": "vdb(out)", "x_values": freqs,
+                                       "y_values": gain_db},
+                          "vp(out)": {"name": "vp(out)", "x_values": freqs,
+                                      "y_values": phase}}}
+        ext = sx.extract_specs({"gain": {"min": 40, "unit": "dB"}}, ac=ac,
+                               output_signal="out")
+        assert "gain" not in ext.values
+        assert "passband" in ext.unmeasurable["gain"]
+
+    def test_a_high_pass_that_flattens_INSIDE_the_sweep_is_not_refused(self):
+        """The peak of a high-pass is its last sample even when it has a passband."""
+        freqs = _log_sweep(1e4, 1e8, 200)
+        gain_db, phase = _response(
+            freqs, lambda f: 100.0 * (1j * f / 1e3) / (1 + 1j * f / 1e3))
+        m = measure.ac_metrics(freqs, gain_db, phase)
+        assert m["passband_gain_db"] == pytest.approx(40.0, abs=0.01)
+
+
+def test_r2_flat_band_is_not_fooled_by_a_window_straddling_a_resonance():
+    """A two-point SLOPE is exactly zero on the flank of a peak.
+
+    That is why the flatness test is peak-to-peak and not a slope: the window
+    starting at 0.82*f0 of a Q = 2.2 resonance has equal endpoints, so a slope
+    test calls it flat and hands back 41.1 dB, one dB under the peak it was
+    supposed to reject.
+    """
+    freqs = _log_sweep(1e3, 1e9, 400)
+    gain_db, _ = _response(freqs, _peaky_amp)
+    i, v = measure.flat_band(freqs, gain_db)
+    assert v == pytest.approx(35.0419, abs=1e-3)
+    assert freqs[i] < 1e6                       # below the 9.07 MHz peak
+
+
+def test_r2_a_window_with_equal_endpoints_and_a_peak_inside_is_not_flat():
+    """The flatness test is PEAK-TO-PEAK, and it has to be.
+
+    A window that straddles a resonant peak has EQUAL ENDPOINTS, so the
+    two-point slope over it is exactly 0.000 dB/decade -- the same instrument
+    that certifies a genuine mid-band. Certifying this window would hand the
+    reward the resonance it was supposed to reject.
+    """
+    freqs = [1.0, 1.02, 1.05, 1.08, 1.10, 10.0 ** 0.1]
+    values = [10.0, 12.0, 14.0, 12.0, 10.5, 10.0]
+    slope, span = measure.local_slope(freqs, values, 0)
+    assert slope == pytest.approx(0.0, abs=1e-9)      # a slope test says "flat"
+    i, v = measure.flat_band(freqs, values)
+    assert i != 0                                     # the ptp test does not
+    assert v is None or v < 10.0 + 1e-9
+
+
+# ===========================================================================
+# R3  the measurement region was walked back to the overshoot peak
+# ===========================================================================
+
+LEAD_DECK = """* passive lead network: R1 shunted by Cf, so the top is still settling
+Vin in 0 PULSE(0 1.8 0 1n 1n 20u 40u)
+R1 in out 10k
+Cf in out 1n
+R2 out 0 10k
+Cl out 0 1p
+.tran 10n 40u
+.end
+"""
+
+AC_DROOP_DECK = """* the textbook AC-coupled droop: C1 100n into R1 1k
+Vin in 0 PULSE(0 1.8 0 1n 1n 20u 40u)
+C1 in out 100n
+R1 out 0 1k
+.tran 10n 40u
+.end
+"""
+
+
+@skipif_no_ngspice
+class TestR3TheTopIsNotWalkedBackToTheOvershootPeak:
+    """The walk-back had no rate test, so a settling top was walked through.
+
+    The loop was "while the sample is lower than the one before it, step back",
+    and a plateau that is still SETTLING descends monotonically. On this deck --
+    an ordinary passive lead network, 4027 samples over 40 us -- the
+    measurement region collapsed from the whole 20 us pulse to samples 7..8,
+    the first NANOSECOND of the record:
+
+        y_final        1.79811 V   against 0.92 V   (the feedthrough spike)
+        overshoot_pct  0.0         against 95+ pct  (monotone by construction)
+        settling_time  None        against ~16 us   ("never settles")
+
+    Every lead-compensated stage, every AC-coupled stage and every pulse with
+    top droop has exactly this shape.
+    """
+
+    @pytest.fixture
+    def lead(self, adapter):
+        result = adapter.tran(LEAD_DECK, SimParams(analysis_type="tran"))
+        sig = result.signals["out"]
+        return adapter.measure_tran(result, "out"), sig
+
+    def test_the_probe_is_the_one_that_was_reported(self, lead):
+        _, sig = lead
+        assert len(sig.y_values) == pytest.approx(4027, abs=60)
+        # The feedthrough spike really is there, and it really is the maximum.
+        assert max(sig.y_values) == pytest.approx(1.79811, rel=1e-3)
+        assert sig.x_values[sig.y_values.index(max(sig.y_values))] < 2e-9
+
+    def test_the_measurement_region_is_the_whole_pulse(self, lead):
+        _, sig = lead
+        lv = measure.waveform_levels(sig.y_values, t=sig.x_values)
+        assert lv.kind == "pulse"
+        assert lv.i_end > 1500                 # was 8, of 4027
+        # i_end is the LAST sample of the top, immediately before the fall.
+        assert sig.x_values[lv.i_end] == pytest.approx(20e-6, rel=1e-3)
+        assert sig.y_values[lv.i_end + 1] < 0.9 * sig.y_values[lv.i_end]
+
+    def test_the_top_is_the_settled_plateau_not_the_spike(self, lead):
+        m, _ = lead
+        assert m["y_final"] == pytest.approx(0.9172, rel=5e-3)   # was 1.79811
+        assert m["y_final"] < 1.0
+
+    def test_the_overshoot_is_reported_instead_of_shortcut_to_zero(self, lead):
+        m, _ = lead
+        # (1.79811 - 0.9172) / 0.9172 = 96.0 pct. It was 0.0, because i_end had
+        # collapsed onto the peak and the region was monotone by construction.
+        assert m["overshoot_pct"] == pytest.approx(96.05, rel=0.02)
+        assert m["overshoot_pct"] > 90.0
+
+    def test_it_settles_inside_the_pulse(self, lead):
+        m, _ = lead
+        assert m["settling_time"] is not None   # was None, "never settles"
+        assert 1.0e-5 < m["settling_time"] < 2.0e-5
+
+    def test_the_ac_coupled_droop_case_too(self, adapter):
+        """C1 100n / R1 1k: the region was samples 10..11 of 4019."""
+        result = adapter.tran(AC_DROOP_DECK, SimParams(analysis_type="tran"))
+        sig = result.signals["out"]
+        lv = measure.waveform_levels(sig.y_values, t=sig.x_values)
+        assert lv.i_end > 1500
+        m = adapter.measure_tran(result, "out")
+        # tau = R1*C1 = 100 us, so the top has drooped to 1.8*exp(-0.2) = 1.474
+        assert m["y_final"] == pytest.approx(1.8 * math.exp(-0.2), rel=0.01)
+        assert m["y_final"] < 1.6                      # was ~1.8
+
+
+def test_r3_a_pulse_whose_fall_really_is_slow_still_walks_back():
+    """The rate test must not cost the case the walk-back was built for.
+
+    1 us RC driven by a 5 us pulse, sampled every 10 ns: the 50 pct return
+    crossing is 0.7 us down the falling edge, so i_ret - 1 sits at 0.89 V and
+    the top has to be walked back to the 1.788 V plateau.
+    """
+    tau = 1e-6
+    top = 1.8 * (1.0 - math.exp(-5.0))
+    t = [i * 20e-6 / 2000 for i in range(2001)]
+    y = [1.8 * (1 - math.exp(-x / tau)) if x < 5e-6
+         else top * math.exp(-(x - 5e-6) / tau) for x in t]
+    lv = measure.waveform_levels(y, t=t)
+    assert lv.kind == "pulse"
+    assert lv.y1 == pytest.approx(top, rel=5e-3)       # not the 0.89 V mid-edge
+    assert t[lv.i_end] == pytest.approx(5e-6, abs=2e-7)
+
+
+# ===========================================================================
+# R7  a step that never settles reported a settled level and a rise time
+# ===========================================================================
+
+SLOW_RC_DECK = """* tau = 1 s, run for 1 ms: it gets 0.0999 pct of the way there
+Vin in 0 PULSE(0 1.8 0 1n 1n 10 20)
+R1 in out 1meg
+C1 out 0 1u
+.tran 1u 1m
+.end
+"""
+
+
+@skipif_no_ngspice
+class TestR7AStepThatNeverSettledHasNoFinalLevel:
+    """The step branch took the mean of the tail verbatim, with no settling test.
+
+    N10 fixed only kind = "pulse"; for a step the level stayed
+    self-referential, because the tail is inside its own band by construction.
+    R 1 Meg / C 1 uF run for 1 ms:
+
+        rise_time      792.4 us    against 2.1972 s   (2773x fast)
+        t_63pct        626.0 us    against 1.0 s      (1597x fast)
+        settling_time  971.0 us    against 3.912 s
+        y_final        0.0017821 V against 1.8 V
+        notes          {}          -- empty
+
+    so a circuit 1000x too slow scored a clean pass against a 1 ms spec.
+    """
+
+    @pytest.fixture
+    def metrics(self, adapter):
+        result = adapter.tran(SLOW_RC_DECK, SimParams(analysis_type="tran"))
+        return adapter.measure_tran(result, "out"), result
+
+    def test_the_probe_is_the_one_that_was_reported(self, metrics):
+        m, result = metrics
+        y = result.signals["out"].y_values
+        # 1 ms of a 1 s time constant: 0.0999 pct of the way to 1.8 V.
+        assert max(y) == pytest.approx(1.8e-3, rel=0.02)
+        assert m["y_final"] == pytest.approx(0.0017821, rel=0.02)
+
+    def test_the_record_is_reported_as_unsettled(self, metrics):
+        m, _ = metrics
+        assert m["waveform_kind"] == "unsettled"
+        assert "STILL MOVING" in m["notes"]["levels"]
+
+    def test_every_metric_that_needs_a_final_level_is_refused(self, metrics):
+        m, _ = metrics
+        for key in ("rise_time", "fall_time", "settling_time", "slew_rate",
+                    "overshoot_pct", "t_50pct", "t_63pct"):
+            assert m[key] is None, key            # rise_time was 792.4 us
+            assert "refused" in m["notes"][key], key
+
+    def test_a_1000x_too_slow_circuit_no_longer_passes_a_1ms_spec(self, adapter):
+        result = adapter.tran(SLOW_RC_DECK, SimParams(analysis_type="tran"))
+        ext = sx.extract_specs({"settling_time": {"max": 1.0, "unit": "ms"},
+                                "rise_time": {"max": 1.0, "unit": "ms"}},
+                               tran=result, output_signal="out")
+        assert ext.values == {}                   # was settling 0.971, rise 0.792
+        assert "STILL MOVING" in ext.unmeasurable["settling_time"]
+        assert "STILL MOVING" in ext.unmeasurable["rise_time"]
+
+
+def test_r7_a_step_that_does_settle_is_untouched():
+    """The guard must not cost the ordinary case: 10 time constants is settled."""
+    tau = 1e-6
+    t = [i * 10e-6 / 2000 for i in range(2001)]
+    y = [1.0 - math.exp(-x / tau) for x in t]
+    m = measure.tran_metrics(t, y)
+    assert m["waveform_kind"] == "step"
+    assert m["rise_time"] == pytest.approx(tau * math.log(9.0), rel=1e-3)
+
+
+# ===========================================================================
+# R4  a negative rail was excluded on POLARITY alone
+# ===========================================================================
+
+INDEPENDENT_RAILS = """* +1.8 into 1.8k and -1.8 into 3.6k, both to GROUND: two currents
+Vdd vdd 0 DC 1.8
+Vss vss 0 DC -1.8
+R1 vdd 0 1.8k
+R2 vss 0 3.6k
+.op
+.end
+"""
+
+RAIL_TO_RAIL = """* +1.8 through 3.6k to -1.8: genuinely ONE current
+Vdd vdd 0 DC 1.8
+Vss vss 0 DC -1.8
+R1 vdd vss 3.6k
+.op
+.end
+"""
+
+THREE_RAILS = """* 1.8 V and 3.3 V rails plus an independent -1.8 V rail
+Vdd vdd 0 DC 1.8
+Vio vio 0 DC 3.3
+Vss vss 0 DC -1.8
+R1 vdd 0 1.8k
+R2 vio 0 3.3k
+R3 vss 0 3.6k
+.op
+.end
+"""
+
+
+class TestR4ANegativeRailIsNotAlwaysAReturnPath:
+    """N5 excluded every negative rail without ever looking at its current.
+
+    The exclusion text asserted "its current is the same current" while the two
+    branch currents that refute it sat in the operating point it was handed:
+
+        A  +1.8/1.8k = 1 mA and -1.8/3.6k = 0.5 mA, independent loads to ground
+           truth 1.500 mA, reported 1.000 mA, warnings [] and ambiguous False
+        C  +1.8 (1 mA), +3.3 (1 mA), -1.8 (0.5 mA)
+           truth 2.500 mA, reported 2.000 mA, plus a spurious "twin" warning
+
+    A design 33 pct over its idd budget was scored under budget in silence:
+    N5's own failure mode, sign-flipped. The magnitude test that settles it was
+    already written in this same function -- on the no-netlist path only.
+    """
+
+    OP_A = {"vdd#branch": -1.0e-3, "vss#branch": 0.5e-3, "vdd": 1.8, "vss": -1.8}
+    OP_B = {"vdd#branch": -1.0e-3, "vss#branch": 1.0e-3, "vdd": 1.8, "vss": -1.8}
+    OP_C = {"vdd#branch": -1.0e-3, "vio#branch": -1.0e-3, "vss#branch": 0.5e-3}
+
+    def test_independent_rails_are_both_supplies(self):
+        rep = measure.supply_current_report(self.OP_A, netlist=INDEPENDENT_RAILS)
+        assert rep.value == pytest.approx(1.5e-3, rel=1e-9)   # was 1.0e-3
+        assert "vss" in rep.sources
+        assert "vss" not in rep.excluded
+
+    def test_the_mismatch_is_stated_rather_than_assumed_away(self):
+        rep = measure.supply_current_report(self.OP_A, netlist=INDEPENDENT_RAILS)
+        joined = " ".join(rep.warnings)
+        assert "NOT the same current" in joined
+
+    def test_a_real_return_path_is_still_excluded(self):
+        """The case N5 was written for must still work."""
+        rep = measure.supply_current_report(self.OP_B, netlist=RAIL_TO_RAIL)
+        assert rep.value == pytest.approx(1.0e-3, rel=1e-9)
+        assert rep.sources == ["vdd"]
+        assert "return path" in rep.excluded["vss"]
+        assert rep.warnings == []
+
+    def test_three_rails_are_summed_and_not_flagged_as_twins(self):
+        rep = measure.supply_current_report(self.OP_C, netlist=THREE_RAILS)
+        assert rep.value == pytest.approx(2.5e-3, rel=1e-9)   # was 2.0e-3
+        joined = " ".join(rep.warnings)
+        # The twins heuristic exists only for the case where no deck is
+        # available; with a deck in hand it ends by advising the caller to pass
+        # the netlist they already passed.
+        assert "supply AMMETER" not in joined
+
+    def test_the_twins_warning_survives_where_it_is_the_only_evidence(self):
+        rep = measure.supply_current_report({"v1#branch": -1e-3,
+                                             "v2#branch": 1e-3})
+        assert "exactly 2x" in " ".join(rep.warnings)
+
+    def test_a_small_negative_bias_reference_is_not_swallowed(self):
+        """-0.2 V carrying 0.2 uA was called "the return path" of a 1 mA rail."""
+        deck = ("* bias reference\nVdd vdd 0 DC 1.8\nVref vref 0 DC -0.2\n"
+                "R1 vdd 0 1.8k\nR2 vref 0 1meg\n.end\n")
+        rep = measure.supply_current_report(
+            {"vdd#branch": -1e-3, "vref#branch": 0.2e-6}, netlist=deck)
+        assert "return path" not in rep.excluded.get("vref", "")
+        assert rep.value == pytest.approx(1.0002e-3, rel=1e-9)
+
+
+@skipif_no_ngspice
+class TestR4AgainstNgspice:
+
+    @pytest.mark.parametrize("deck,truth", [
+        (INDEPENDENT_RAILS, 1.5e-3),
+        (RAIL_TO_RAIL, 1.0e-3),
+        (THREE_RAILS, 2.5e-3),
+    ])
+    def test_the_supply_current_matches_ohms_law(self, adapter, deck, truth):
+        result = adapter.dc(deck, SimParams(analysis_type="dc"))
+        rep = measure.supply_current_report(result.op_points, netlist=deck)
+        assert rep.value == pytest.approx(truth, rel=1e-6)
+
+
+# ===========================================================================
+# R5  measure_ac / measure_tran paired per-signal y with the GLOBAL axis
+# ===========================================================================
+
+AC_COUPLED_LIN_DECK = """* AC-coupled stage swept LIN from 0 Hz: the f=0 sample of out is dropped
+Vin in 0 DC 0 AC 1
+C1 in mid 100n
+R1 mid 0 1k
+E1 buf 0 mid 0 100
+Rout buf out 1.5915k
+Cl out 0 1n
+.ac LIN 1001 0 1e6
+.end
+"""
+
+
+@skipif_no_ngspice
+class TestR5TheSignalCarriesItsOwnAxis:
+    """_build_ac drops the samples with no transfer function and says so.
+
+    spec_extract was fixed to honour that; measure_ac and measure_tran were
+    not, so a shortened y was paired with the full global axis and every sample
+    was attributed to the frequency one grid step low:
+
+        len(result.frequencies) = 1001,  len(vdb(out).x_values) = 1000
+        signal axis starts at 1000 Hz, result axis at 0 Hz
+
+        bandwidth_3db   global axis 245309.59 Hz | own axis 103142.81
+        passband_gain   global axis  34.5181 dB | own axis  39.8626
+        rolloff         global axis  None       | own axis -17.0317
+
+    The shift is one grid step, so on a coarse LIN sweep it is arbitrarily
+    large.
+    """
+
+    @pytest.fixture
+    def result(self, adapter):
+        return adapter.ac(AC_COUPLED_LIN_DECK, SimParams(analysis_type="ac"))
+
+    def test_the_two_axes_really_do_differ(self, result):
+        assert len(result.frequencies) == 1001
+        mag = result.signals["vdb(out)"]
+        assert len(mag.y_values) == 1000
+        assert mag.x_values[0] == pytest.approx(1000.0)
+        assert result.frequencies[0] == 0.0
+
+    def test_measure_ac_uses_the_signal_axis(self, result, adapter):
+        m = adapter.measure_ac(result, "out")
+        assert m["bandwidth_3db"] == pytest.approx(103142.81, rel=1e-4)
+        assert m["passband_gain_db"] == pytest.approx(39.8626, abs=1e-3)
+        assert m["rolloff_db_per_dec"] == pytest.approx(-17.0317, abs=1e-3)
+
+    def test_the_global_axis_is_what_it_used_to_answer(self, result):
+        """The number the old pairing produced, to show the test bites."""
+        bad = measure.ac_metrics(result.frequencies,
+                                 result.signals["vdb(out)"].y_values,
+                                 result.signals["vp(out)"].y_values)
+        assert bad["bandwidth_3db"] == pytest.approx(245309.59, rel=1e-4)
+        assert bad["rolloff_db_per_dec"] is None
+
+    def test_spec_extract_and_measure_ac_now_agree(self, result):
+        m = NgspiceSharedAdapter.measure_ac(result, "out")
+        ext = sx.extract_specs({"bw": {"min": 1.0, "unit": "kHz"}}, ac=result,
+                               output_signal="out")
+        assert ext.values["bw"] * 1e3 == pytest.approx(m["bandwidth_3db"],
+                                                       rel=1e-12)
+
+
+def test_r5_measure_tran_uses_the_signal_axis_too():
+    """The identical construction, one function down.
+
+    A .tran axis is NOT uniform -- ngspice takes short steps through an edge
+    and long ones across a plateau -- so a one-sample misalignment moves the
+    10 pct crossing and the 90 pct crossing by different amounts and the rise
+    time itself changes.
+    """
+    from asic_ai.tool_interface.schema import SignalData, TranResult
+    tau = 1e-6
+    fine = [i * 5e-9 for i in range(201)]            # 5 ns through the edge
+    coarse = [1e-6 + (i + 1) * 45e-9 for i in range(200)]   # 45 ns after it
+    full_t = fine + coarse
+    # The signal is defined only from the second sample on -- one dropped
+    # sample, exactly what _finite_pairs leaves behind.
+    own_t = full_t[1:]
+    y = [1.0 - math.exp(-x / tau) for x in own_t]
+    result = TranResult(
+        time=full_t,
+        signals={"out": SignalData(name="out", x_values=own_t, y_values=y)})
+    m = NgspiceSharedAdapter.measure_tran(result, "out")
+    assert m["rise_time"] == pytest.approx(tau * math.log(9.0), rel=2e-3)
+    # Paired with the full time vector every sample is one step early, and the
+    # steps are 9x longer at the 90 pct crossing than at the 10 pct one.
+    bad = measure.tran_metrics(full_t, y)
+    assert bad["rise_time"] != pytest.approx(m["rise_time"], rel=1e-2)
+
+
+# ===========================================================================
+# R6  rl_env adopted an inline netlist even when the tool FAILED
+# ===========================================================================
+
+R6_DESIGN = """* the design: a Vdd rail and a 0 V Vsense ammeter in series with the load
+Vdd vdd 0 DC 1.8
+Vsense vdd top DC 0
+R1 top out 5k
+R2 out 0 5k
+.op
+.end
+"""
+
+R6_TESTBENCH = """* a stability testbench with NO .ac card at all
+Vin in 0 DC 0 AC 1
+R1 in out 1k
+C1 out 0 1n
+.end
+"""
+
+
+@skipif_no_ngspice
+class TestR6AFailedToolMustNotReplaceTheDeck:
+    """state.netlist was written BEFORE the adapter was called.
+
+    netlist.patch is guarded with `if tool_success`; sim.* was not. sim.dc on
+    the design, then sim.ac on a testbench with no .ac card: the call raises,
+    tool_success is False, and state.netlist was already the testbench. Then
+    spec.check resolved the supply polarities of the design's operating point
+    out of a deck that has no Vsense, so the 0 V ammeter was summed as a second
+    rail and idd read 0.36 mA against a true 0.18 mA -- exactly 2x, the D7/N5
+    failure returning by a third route.
+    """
+
+    TASK = {"id": "r6", "specs": {"idd": {"max": 0.2, "unit": "mA"}}}
+
+    @pytest.fixture
+    def env(self, adapter):
+        from asic_ai.reward.reward import RewardFunction, SpecTarget
+        from asic_ai.training.rl_env import CircuitDesignEnv
+        rf = RewardFunction(specs=[SpecTarget(name="idd", max_val=0.2,
+                                              unit="mA")])
+        e = CircuitDesignEnv(adapter, rf, max_steps=10)
+        e.reset(self.TASK)
+        return e
+
+    def test_the_failing_call_really_does_fail(self, env):
+        env.step({"name": "sim.dc", "arguments": {"netlist": R6_DESIGN}})
+        result = env.step({"name": "sim.ac",
+                           "arguments": {"netlist": R6_TESTBENCH}})
+        assert "error" in result.observation
+
+    def test_the_deck_survives_the_failed_call(self, env):
+        env.step({"name": "sim.dc", "arguments": {"netlist": R6_DESIGN}})
+        env.step({"name": "sim.ac", "arguments": {"netlist": R6_TESTBENCH}})
+        assert "Vsense" in env.state.netlist
+        assert "Vin in 0" not in env.state.netlist
+
+    def test_idd_is_the_true_supply_current_not_twice_it(self, env):
+        env.step({"name": "sim.dc", "arguments": {"netlist": R6_DESIGN}})
+        env.step({"name": "sim.ac", "arguments": {"netlist": R6_TESTBENCH}})
+        out = json.loads(env.step({"name": "spec.check",
+                                   "arguments": {}}).observation)
+        assert out["measured"]["idd"] == pytest.approx(0.18, rel=1e-6)
+
+    def test_a_successful_call_still_adopts_its_deck(self, env):
+        """The behaviour C4 added must survive the guard."""
+        env.step({"name": "sim.dc", "arguments": {"netlist": R6_DESIGN}})
+        assert "Vsense" in env.state.netlist
+
+    def test_a_stale_deck_is_never_used_to_resolve_an_older_result(self, env):
+        """The guard ngspice_shared._netlist_for makes, on the reward path.
+
+        Even when the second call SUCCEEDS, the deck it leaves behind did not
+        produce the operating point idd is read out of.
+        """
+        env.step({"name": "sim.dc", "arguments": {"netlist": R6_DESIGN}})
+        env.state.netlist = R6_TESTBENCH        # a later, successful, other deck
+        env.state.analysis_netlists.pop("dc")
+        assert env._reward_netlist() is None
+
+
+# ===========================================================================
+# R8 / R9 / R12  the two ends of a .noise card are two different families
+# ===========================================================================
+
+TIA_DECK = ("* TIA: the noise run is referred to a CURRENT source\n"
+            "Iin 0 in AC 1\nR1 in out 10k\n"
+            ".noise v(out) Iin dec 100 1 1G\n.end\n")
+
+_NOISE_FC = 1e3
+_IN_FLOOR = 3e-13        # 0.3 pA/sqrt(Hz) input-referred
+_ON_FLOOR = 3e-7         # 0.3 uV/sqrt(Hz)  output-referred
+
+
+def _tia_noise():
+    freqs = [10.0 ** (i / 100.0) for i in range(0, 901)]
+
+    def shape(floor):
+        return [floor * math.sqrt(1.0 + _NOISE_FC / f) for f in freqs]
+
+    return {"frequencies": freqs,
+            "input_noise": {"name": "inoise_spectrum", "x_values": freqs,
+                            "y_values": shape(_IN_FLOOR)},
+            "output_noise": {"name": "onoise_spectrum", "x_values": freqs,
+                             "y_values": shape(_ON_FLOOR)}}
+
+
+class TestR8TheOutputDensityFollowsTheOutputExpression:
+    """output_noise_density was scaled by the INPUT source's letter.
+
+    The output of `.noise v(out) Iin ...` is a VOLTAGE density whatever the
+    source letter is; the family has to come from the .noise OUTPUT expression.
+    On this TIA, onoise = 0.3 uV/sqrt(Hz):
+
+        output_noise in nV/sqrt(Hz) -> refused, "not a noise_density_i unit"
+        output_noise in pA/sqrt(Hz) -> ACCEPTED, value 300000.0
+
+    which is a V/sqrt(Hz) measurement divided by 1e-12: the exact 1e12
+    mis-scaling C6 claims to have eliminated, moved to the other field.
+    """
+
+    def test_the_two_ends_are_read_separately(self):
+        assert sx.noise_input_kind(TIA_DECK) == "i"
+        assert sx.noise_output_kind(TIA_DECK) == "v"
+        assert sx.noise_output_kind(None) is None
+
+    def test_a_voltage_unit_is_accepted_for_the_output_density(self):
+        ext = sx.extract_specs(
+            {"output_noise": {"max": 1000, "unit": "nV/sqrt(Hz)"}},
+            noise=_tia_noise(), netlist=TIA_DECK, noise_freq=1e5)
+        expected = _ON_FLOOR * math.sqrt(1 + _NOISE_FC / 1e5) / 1e-9
+        assert ext.values["output_noise"] == pytest.approx(expected, rel=1e-6)
+
+    def test_a_current_unit_is_refused_for_the_output_density(self):
+        ext = sx.extract_specs(
+            {"output_noise": {"max": 1000, "unit": "pA/sqrt(Hz)"}},
+            noise=_tia_noise(), netlist=TIA_DECK, noise_freq=1e5)
+        assert "output_noise" not in ext.values      # was 300000.0
+        assert "noise_density_v" in ext.unmeasurable["output_noise"]
+
+    def test_the_input_density_still_follows_the_source(self):
+        """C6 must survive: the INPUT end of the same card is a current."""
+        ext = sx.extract_specs(
+            {"noise": {"max": 10, "unit": "pA/sqrt(Hz)"}},
+            noise=_tia_noise(), netlist=TIA_DECK, noise_freq=1e5)
+        expected = _IN_FLOOR * math.sqrt(1 + _NOISE_FC / 1e5) / 1e-12
+        assert ext.values["noise"] == pytest.approx(expected, rel=1e-6)
+
+
+class TestR9TheIntegratedInputNoiseIsNotAlwaysAVoltage:
+    """input_noise_rms was declared "voltage" outright.
+
+    For a current-referred .noise the integrated input noise is in AMPERES, so
+    `noise_rms: {unit: nA}` was refused as "not a voltage unit" and a uV or nV
+    spec would have silently rescaled amperes as volts.
+    """
+
+    def test_the_measurement_really_is_in_amperes(self):
+        ext = sx.extract_specs({}, noise=_tia_noise(), netlist=TIA_DECK)
+        rms = ext.metrics_si["input_noise_rms"]
+        assert rms == pytest.approx(9.4869e-9, rel=1e-3)
+
+    def test_a_current_unit_is_accepted(self):
+        ext = sx.extract_specs({"noise_rms": {"max": 20.0, "unit": "nA"}},
+                               noise=_tia_noise(), netlist=TIA_DECK)
+        assert ext.values["noise_rms"] == pytest.approx(9.4869, rel=1e-3)
+
+    def test_a_voltage_unit_is_refused_for_a_current_referred_run(self):
+        ext = sx.extract_specs({"noise_rms": {"max": 20.0, "unit": "uV"}},
+                               noise=_tia_noise(), netlist=TIA_DECK)
+        assert "noise_rms" not in ext.values
+        assert "not a current unit" in ext.unmeasurable["noise_rms"]
+
+    def test_a_voltage_driven_run_still_reports_volts(self):
+        """N13's own probe must keep working."""
+        deck = ("* v\nVin in 0 DC 0 AC 1\nR1 in out 1k\n"
+                ".noise v(out) Vin dec 50 1 1e6\n.end\n")
+        noise = {"frequencies": [1e3, 1e4, 1e5],
+                 "input_noise": {"name": "inoise_spectrum",
+                                 "x_values": [1e3, 1e4, 1e5],
+                                 "y_values": [2e-9, 2e-9, 2e-9]}}
+        ext = sx.extract_specs({"noise_rms": {"max": 100, "unit": "uV"}},
+                               noise=noise, netlist=deck)
+        assert ext.values["noise_rms"] > 0.0
+
+
+class TestR12NoiseFreqReachesTheSpec:
+    """The N13 refusal was correct and unreachable.
+
+    Nothing ever passed `noise_freq`: rl_env did not plumb it and no eval task
+    carried the field, so eval/tasks/analog/tia_001.yaml's
+    `noise: {max: 10, unit: pA/sqrt(Hz)}` could never be scored -- and an
+    unmeasurable spec the caller does not drop is a silent -1.0 on the task,
+    which is the very failure the refusal exists to prevent. The frequency is a
+    property of the SPEC, so it now lives on the spec.
+    """
+
+    def test_the_eval_task_now_names_a_frequency(self):
+        import yaml
+        with open("eval/tasks/analog/tia_001.yaml", encoding="utf-8") as fh:
+            task = yaml.safe_load(fh)
+        assert sx.spec_noise_freq(task["specs"]) == pytest.approx(100e3)
+
+    def test_the_tia_task_spec_is_now_measurable(self):
+        import yaml
+        with open("eval/tasks/analog/tia_001.yaml", encoding="utf-8") as fh:
+            task = yaml.safe_load(fh)
+        ext = sx.extract_specs(task["specs"], noise=_tia_noise(),
+                               netlist=TIA_DECK)
+        expected = _IN_FLOOR * math.sqrt(1 + _NOISE_FC / 1e5) / 1e-12
+        assert ext.values["noise"] == pytest.approx(expected, rel=1e-6)
+        assert "noise" not in ext.unmeasurable
+
+    def test_without_a_frequency_it_is_still_refused(self):
+        """The N13 guard itself is untouched."""
+        ext = sx.extract_specs({"noise": {"max": 10, "unit": "pA/sqrt(Hz)"}},
+                               noise=_tia_noise(), netlist=TIA_DECK)
+        assert "noise" not in ext.values
+        assert "noise_freq" in ext.unmeasurable["noise"]
+
+    def test_an_explicit_argument_still_wins(self):
+        specs = {"noise": {"max": 10, "unit": "pA/sqrt(Hz)", "at_freq": 1e5}}
+        ext = sx.extract_specs(specs, noise=_tia_noise(), netlist=TIA_DECK,
+                               noise_freq=1e4)
+        expected = _IN_FLOOR * math.sqrt(1 + _NOISE_FC / 1e4) / 1e-12
+        assert ext.values["noise"] == pytest.approx(expected, rel=1e-6)
+
+    def test_rl_env_plumbs_it_from_the_task(self):
+        from asic_ai.training.rl_env import CircuitDesignEnv
+        env = CircuitDesignEnv(None, None)
+        env.reset({"id": "tia", "specs": {
+            "noise": {"max": 10, "unit": "pA/sqrt(Hz)", "at_freq": 100e3}}})
+        assert env.state.noise_freq == pytest.approx(100e3)
+
+
+# ===========================================================================
+# R10  slew_rate carried the edge sign into the spec
+# ===========================================================================
+
+def _falling_edge():
+    tau = 20e-9
+    n = 2001
+    t = [i * 1e-6 / (n - 1) for i in range(n)]
+    y = [1.8 * math.exp(-x / tau) if x > 0 else 1.8 for x in t]
+    return t, y
+
+
+class TestR10TheSpecTakesTheMagnitudeOfTheSlewRate:
+    """A falling first edge made every slew_rate spec fail at -1.0.
+
+    Which edge is measured is a property of the TESTBENCH polarity, not of the
+    design. eval/tasks/analog/class_ab_output_001.yaml declares
+    `slew_rate: {min: 100.0, unit: V/us}`, so a design whose stimulus happens
+    to fall first scored -1.0 on that spec whatever the circuit did.
+    """
+
+    def test_the_measurement_still_says_which_edge_it_measured(self):
+        t, y = _falling_edge()
+        assert measure.tran_metrics(t, y)["slew_rate"] < 0.0
+
+    def test_the_spec_value_is_the_magnitude(self):
+        t, y = _falling_edge()
+        tran = {"time": t,
+                "signals": {"out": {"name": "out", "x_values": t,
+                                    "y_values": y}}}
+        ext = sx.extract_specs({"slew_rate": {"min": 10.0, "unit": "V/us"}},
+                               tran=tran, output_signal="out")
+        assert ext.values["slew_rate"] > 0.0        # was -32.77
+        assert ext.values["slew_rate"] == pytest.approx(32.769, rel=1e-3)
+
+    def test_a_rising_edge_is_unchanged(self):
+        tau = 20e-9
+        n = 2001
+        t = [i * 1e-6 / (n - 1) for i in range(n)]
+        y = [1.8 * (1.0 - math.exp(-x / tau)) for x in t]
+        tran = {"time": t,
+                "signals": {"out": {"name": "out", "x_values": t,
+                                    "y_values": y}}}
+        ext = sx.extract_specs({"slew_rate": {"min": 10.0, "unit": "V/us"}},
+                               tran=tran, output_signal="out")
+        assert ext.values["slew_rate"] == pytest.approx(32.769, rel=1e-3)
+
+    def test_the_two_polarities_now_score_the_same_design_the_same(self):
+        t, y = _falling_edge()
+        rising = [1.8 - v for v in y]
+        specs = {"slew_rate": {"min": 10.0, "unit": "V/us"}}
+
+        def value(sig):
+            tran = {"time": t, "signals": {"out": {"name": "out",
+                                                   "x_values": t,
+                                                   "y_values": sig}}}
+            return sx.extract_specs(specs, tran=tran,
+                                    output_signal="out").values["slew_rate"]
+
+        assert value(y) == pytest.approx(value(rising), rel=1e-9)
+
+
+# ===========================================================================
+# R11  prop_delay measured between two OUTPUTS when there was no input
+# ===========================================================================
+
+def _step_at(t, t0):
+    return [0.0 if x < t0 else 1.8 for x in t]
+
+
+class TestR11APropagationDelayNeedsAnInput:
+    """`_pick_output(signals, "in")` is an OUTPUT chooser.
+
+    Asked for "in" and given a result with no input at all it fell through to
+    out / vout / output, so a TranResult holding `out` and `vout` and no
+    stimulus produced a confident 40 ns delay between two OUTPUTS, with
+    `unmeasurable` empty.
+    """
+
+    T = [i * 200e-9 / 400 for i in range(401)]
+
+    def _tran(self, **sigs):
+        return {"time": self.T,
+                "signals": {k: {"name": k, "x_values": self.T, "y_values": v}
+                            for k, v in sigs.items()}}
+
+    def test_two_outputs_and_no_input_is_refused(self):
+        tran = self._tran(out=_step_at(self.T, 60e-9),
+                          vout=_step_at(self.T, 100e-9))
+        ext = sx.extract_specs({"delay": {"max": 100.0, "unit": "ns"}},
+                               tran=tran, output_signal="vout")
+        assert "delay" not in ext.values             # was 40.0 ns
+        assert "no input signal" in ext.unmeasurable["delay"]
+
+    def test_a_real_input_is_still_measured(self):
+        tran = self._tran(**{"in": _step_at(self.T, 20e-9),
+                             "out": _step_at(self.T, 60e-9),
+                             "vout": _step_at(self.T, 100e-9)})
+        ext = sx.extract_specs({"delay": {"max": 100.0, "unit": "ns"}},
+                               tran=tran, output_signal="vout")
+        assert ext.values["delay"] == pytest.approx(80.0, abs=1.0)
+
+    def test_the_input_can_be_named(self):
+        tran = self._tran(**{"stim": _step_at(self.T, 20e-9),
+                             "vout": _step_at(self.T, 100e-9)})
+        ext = sx.extract_specs({"delay": {"max": 100.0, "unit": "ns"}},
+                               tran=tran, output_signal="vout",
+                               input_signal="stim")
+        assert ext.values["delay"] == pytest.approx(80.0, abs=1.0)
+
+    def test_the_picker_never_falls_back_to_an_output(self):
+        from asic_ai.adapters.spec_extract import _pick_input, _pick_output
+        signals = {"out": 1, "vout": 2}
+        assert _pick_output(signals, "in") in ("out", "vout")   # it is an
+        assert _pick_input(signals) is None                     # output chooser
+
+
+# ===========================================================================
+# R13  a nested .dc is flattened into a non-monotonic axis
+# ===========================================================================
+
+NESTED_DC = """* two swept sources: ngspice flattens them into one vector
+V1 a 0 DC 0
+V2 b 0 DC 0
+R1 a out 1k
+R2 out b 1k
+.dc V1 0 1 0.5 V2 0 1 0.5
+.end
+"""
+
+
+@skipif_no_ngspice
+class TestR13ANestedDcIsAGridNotACurve:
+    """.dc V1 0 1 0.5 V2 0 1 0.5 gives every signal x = [0, .5, 1, 0, .5, 1, ...].
+
+    output_swing survived as max-minus-min and nothing flagged the 2-D sweep,
+    so the number it produced was the excursion over BOTH sweeps -- it includes
+    whatever the outer variable did -- and it read as an output swing.
+    """
+
+    def test_the_axis_really_does_double_back(self, adapter):
+        result = adapter.dc(NESTED_DC, SimParams(analysis_type="dc"))
+        sig = result.sweeps["out"]
+        assert sig.x_values == pytest.approx([0.0, 0.5, 1.0] * 3)
+        assert len(sig.y_values) == 9
+
+    def test_the_samples_are_kept(self, adapter):
+        """A device I-V family is a legitimate analysis; the data is complete."""
+        result = adapter.dc(NESTED_DC, SimParams(analysis_type="dc"))
+        assert result.sweeps["out"].y_values == pytest.approx(
+            [0.0, 0.25, 0.5, 0.25, 0.5, 0.75, 0.5, 0.75, 1.0])
+
+    def test_the_adapter_names_it(self, adapter, caplog):
+        import logging
+        with caplog.at_level(logging.WARNING,
+                             logger="asic_ai.adapters.ngspice_shared"):
+            adapter.dc(NESTED_DC, SimParams(analysis_type="dc"))
+        assert "NESTED" in caplog.text
+
+    def test_output_swing_is_refused_across_a_grid(self, adapter):
+        result = adapter.dc(NESTED_DC, SimParams(analysis_type="dc"))
+        ext = sx.extract_specs({"output_swing": {"max": 2.0, "unit": "V"}},
+                               dc=result, output_signal="out")
+        assert "output_swing" not in ext.values      # was 1.0, silently
+        assert "not monotonic" in ext.unmeasurable["output_swing"]
+
+    def test_a_single_sweep_still_reports_its_swing(self, adapter):
+        deck = ("* one swept source\nV1 a 0 DC 0\nR1 a out 1k\nR2 out 0 1k\n"
+                ".dc V1 0 1 0.25\n.end\n")
+        result = adapter.dc(deck, SimParams(analysis_type="dc"))
+        ext = sx.extract_specs({"output_swing": {"max": 2.0, "unit": "V"}},
+                               dc=result, output_signal="out")
+        assert ext.values["output_swing"] == pytest.approx(0.5, rel=1e-9)

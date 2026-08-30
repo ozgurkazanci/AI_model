@@ -81,8 +81,11 @@ ALIASES: dict[str, str] = {
     # spelling means "the gain of this amplifier", which for an AC-coupled or
     # band-pass stage is the MID-BAND gain, not whatever the response happens
     # to be at f_start. Those map to passband_gain_db, which is the DC gain
-    # when the sweep reaches DC and the peak gain otherwise. Before this split
-    # an AC-coupled stage with 40 dB of mid-band gain reported -24 dB.
+    # when the sweep reaches DC and the gain of the FLAT region otherwise.
+    # Before this split an AC-coupled stage with 40 dB of mid-band gain
+    # reported -24 dB; and while it was the PEAK gain rather than the flat
+    # region, an under-damped 35 dB amplifier reported its 42 dB resonance and
+    # passed a 40 dB spec, so every step toward a peakier design read better.
     "gain": "passband_gain_db",
     "dc_gain": "dc_gain_db",
     "gain_db": "passband_gain_db",
@@ -156,7 +159,12 @@ DIMENSIONS: dict[str, str] = {
     "overshoot_pct": "percent",
     "input_noise_density": "noise_density",
     "output_noise_density": "noise_density",
-    "input_noise_rms": "voltage",
+    # The INTEGRATED input-referred noise is in the same family as the input
+    # density it was integrated from: volts for '.noise v(out) Vin' and AMPERES
+    # for '.noise v(out) Iin'. Declaring it "voltage" outright is the C6 defect
+    # left in place one field over -- a nA spec was refused as "not a voltage
+    # unit" and a uV spec silently rescaled amperes as volts.
+    "input_noise_rms": "noise_rms",
 }
 
 
@@ -184,27 +192,65 @@ _SCALES: dict[str, dict[str, float]] = {
     "noise_density_i": {"a/sqrt(hz)": 1.0, "pa/sqrt(hz)": 1e-12,
                         "na/sqrt(hz)": 1e-9, "fa/sqrt(hz)": 1e-15},
 }
+# The integrated RMS of each family is just that family's plain unit.
+_NOISE_RMS_DIMENSION = {"v": "voltage", "i": "current"}
 
-# The .noise card: '.noise v(out) V1 dec 100 1 1G'. The second token is the
-# input source, and its first letter is its type -- a SPICE language rule.
+# The .noise card: '.noise v(out) V1 dec 100 1 1G'. The FIRST token is the
+# output expression and the SECOND is the input source, whose first letter is
+# its type -- a SPICE language rule.
 _NOISE_CARD_RE = re.compile(
-    r"^\s*\.noise\s+\S+\s+([a-zA-Z]\S*)", re.IGNORECASE | re.MULTILINE)
+    r"^\s*\.noise\s+(\S+)\s+([a-zA-Z]\S*)", re.IGNORECASE | re.MULTILINE)
 
 
 def noise_input_kind(netlist: Optional[str]) -> Optional[str]:
     """'v', 'i', or None: the type of the source a .noise run is referred to.
 
-    This is what makes an input-referred noise density a voltage density or a
+    This is what makes an INPUT-referred noise density a voltage density or a
     current density. It is not knowable from a NoiseResult, which carries
     numbers and no units.
+
+    It says nothing whatever about the OUTPUT-referred density; use
+    noise_output_kind() for that.
     """
     if not netlist:
         return None
     m = _NOISE_CARD_RE.search(netlist)
     if not m:
         return None
-    letter = m.group(1)[0].lower()
+    letter = m.group(2)[0].lower()
     return letter if letter in ("v", "i") else None
+
+
+def noise_output_kind(netlist: Optional[str]) -> Optional[str]:
+    """'v', 'i', or None: the family of the OUTPUT-referred noise density.
+
+    onoise_spectrum is the noise at the OUTPUT EXPRESSION of the .noise card,
+    so its family comes from that expression and NOT from the input source.
+    '.noise v(out) Iin dec 100 1 1G' measures a VOLTAGE density at out even
+    though it refers the input-equivalent one to a current.
+
+    Scaling the output density by the INPUT source's letter is the C6 defect
+    moved one field over, and it fires on exactly the deck C6 was written for:
+    on that TIA a `nV/sqrt(Hz)` output_noise spec was refused as "not a
+    noise_density_i unit" while a `pA/sqrt(Hz)` one was ACCEPTED and a
+    0.3 uV/sqrt(Hz) measurement came back as 300000 -- a factor of 1e12, in the
+    direction that makes the design look good.
+
+    ngspice's .noise output must be a voltage expression, so anything of the
+    form 'v(...)' is a voltage density and anything else is unknown rather
+    than guessed.
+    """
+    if not netlist:
+        return None
+    m = _NOISE_CARD_RE.search(netlist)
+    if not m:
+        return None
+    expr = m.group(1).strip().lower()
+    if expr.startswith("v(") or expr.startswith("vdb(") or expr.startswith("vm("):
+        return "v"
+    if expr.startswith("i("):
+        return "i"
+    return None
 
 # Units that mark a spec as functional/digital rather than analog-measurable.
 _NON_ANALOG_UNITS = {"bool", "bits", "lsb", "cycles", "years", "um2"}
@@ -242,6 +288,50 @@ def canonical_metric(spec_name: str) -> Optional[str]:
     return ALIASES.get(spec_name.strip().lower())
 
 
+def spec_noise_freq(specs: Mapping[str, Any]) -> Optional[float]:
+    """The frequency a task's noise-DENSITY spec is declared at, if it says.
+
+    A noise density is a value AT A FREQUENCY, and _noise_density() rightly
+    refuses to invent one: without a frequency it reports the bottom of the
+    sweep only when the spectrum is demonstrably flat there, and on any real
+    1/f-plus-thermal spectrum it refuses. That refusal was correct and it was
+    also unreachable, because nothing ever passed `noise_freq`: rl_env did not
+    plumb it and no eval task carried it. eval/tasks/analog/tia_001.yaml
+    declares `noise: {max: 10, unit: pA/sqrt(Hz)}` and that spec could
+    therefore NEVER be scored -- and an unmeasurable spec that the caller does
+    not drop is a silent -1.0 on the task, which is exactly the failure the
+    refusal was meant to avoid.
+
+    So a density spec says where it is measured, on the spec itself:
+
+        noise:
+          max: 10
+          unit: pA/sqrt(Hz)
+          at_freq: 100e3        # Hz
+
+    which is the right home for it, because the frequency is a property of the
+    SPEC and not of the simulation. The first density spec that names one wins;
+    an explicit `noise_freq=` argument still overrides.
+    """
+    for name, sdef in (specs or {}).items():
+        metric = canonical_metric(name)
+        if metric not in ("input_noise_density", "output_noise_density"):
+            continue
+        d = _as_dict(sdef) or {}
+        raw = d.get("at_freq", d.get("noise_freq"))
+        if raw is None:
+            continue
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            log.warning("spec %r declares an unreadable at_freq %r; ignored",
+                        name, raw)
+            continue
+        if value > 0.0:
+            return value
+    return None
+
+
 # ----------------------------------------------------------------------------
 # Result normalisation -- accept pydantic models or their model_dump() dicts
 # ----------------------------------------------------------------------------
@@ -260,6 +350,18 @@ def _as_dict(obj: Any) -> Optional[dict]:
 def _signal_xy(sig: Any) -> tuple[list[float], list[float]]:
     d = _as_dict(sig) or {}
     return list(d.get("x_values") or []), list(d.get("y_values") or [])
+
+
+def _is_monotone_axis(x: Sequence[float]) -> bool:
+    """True when a sweep axis never doubles back on itself.
+
+    False for the flattened NESTED '.dc' that ngspice writes as one vector with
+    the inner sweep repeated per outer value.
+    """
+    signs = [1 if b > a else (-1 if b < a else 0)
+             for a, b in zip(list(x), list(x)[1:])]
+    signs = [v for v in signs if v]
+    return all(a == b for a, b in zip(signs, signs[1:]))
 
 
 def _pick_output(signals: Mapping[str, Any], preferred: Optional[str],
@@ -299,6 +401,29 @@ def _pick_output(signals: Mapping[str, Any], preferred: Optional[str],
     return None
 
 
+def _pick_input(signals: Mapping[str, Any],
+                preferred: Optional[str] = None) -> Optional[str]:
+    """Choose the INPUT/stimulus signal key, or None when there is not one.
+
+    _pick_output() must never be used for this. It is an OUTPUT chooser: asked
+    for "in" and given a result with no input at all it falls through to
+    out / vout / output and then to the first non-branch vector, so a
+    TranResult holding only `out` and `vout` produced a confident 40 ns
+    "propagation delay" between two OUTPUTS, with nothing in `unmeasurable` to
+    say so. A propagation delay with no input reference is not a small error,
+    it is a different measurement.
+
+    Only names that actually denote a stimulus are accepted, and when none is
+    present the answer is None so the caller can refuse.
+    """
+    if not signals:
+        return None
+    for cand in (preferred, "in", "vin", "input", "v(in)", "in_p"):
+        if cand and cand in signals:
+            return cand
+    return None
+
+
 # ----------------------------------------------------------------------------
 # Canonical metrics in SI
 # ----------------------------------------------------------------------------
@@ -308,7 +433,8 @@ def _compute_metrics(dc: Any, ac: Any, tran: Any, noise: Any, stb: Any,
                      supply_sources: Optional[Sequence[str]],
                      netlist: Optional[str] = None,
                      unmeasurable: Optional[dict[str, str]] = None,
-                     noise_freq: Optional[float] = None
+                     noise_freq: Optional[float] = None,
+                     input_signal: Optional[str] = None
                      ) -> dict[str, float]:
     """Every canonical metric the supplied results support, in SI units.
 
@@ -354,8 +480,9 @@ def _compute_metrics(dc: Any, ac: Any, tran: Any, noise: Any, stb: Any,
             # across rather than replacing it with a generic "not produced".
             notes = am.get("notes") or {}
             for metric, note in notes.items():
-                if metric in ("dc_gain_db", "bandwidth_3db", "ugb",
-                              "phase_margin", "gain_margin"):
+                if metric in ("dc_gain_db", "passband_gain_db",
+                              "bandwidth_3db", "ugb", "phase_margin",
+                              "gain_margin"):
                     why[metric] = note
 
     # -- stability overrides AC for margins, it is the purpose-built analysis -
@@ -385,8 +512,23 @@ def _compute_metrics(dc: Any, ac: Any, tran: Any, noise: Any, stb: Any,
         sweeps = dcd.get("sweeps") or {}
         key = _pick_output(sweeps, output_signal)
         if key:
-            _, y = _signal_xy(sweeps[key])
-            if y:
+            xs, y = _signal_xy(sweeps[key])
+            if y and not _is_monotone_axis(xs):
+                # ngspice flattens a NESTED '.dc V1 ... V2 ...' into one vector
+                # per signal, so the axis doubles back once per outer step:
+                # [0, 0.5, 1, 0, 0.5, 1, ...]. max-minus-min across that is the
+                # excursion over the whole 2-D GRID -- it includes whatever the
+                # outer variable did -- and it is not the output swing of a
+                # sweep. Nothing flagged it, and the number looked ordinary.
+                why["output_swing"] = (
+                    f"refused: the sweep axis of {key!r} is not monotonic "
+                    f"({len(xs)} points that double back on themselves), which "
+                    f"is how ngspice writes a NESTED '.dc' -- two swept sources "
+                    f"flattened into one vector. max-minus-min across that grid "
+                    f"is the excursion over BOTH sweeps, not the output swing "
+                    f"of one. Run a single '.dc' per outer value."
+                )
+            elif y:
                 put("output_swing", max(y) - min(y))
 
     # -- transient -----------------------------------------------------------
@@ -400,14 +542,40 @@ def _compute_metrics(dc: Any, ac: Any, tran: Any, noise: Any, stb: Any,
             if len(sig_t) == len(y) and sig_t:
                 t = sig_t
             tm = measure.tran_metrics(t, y)
+            # tran_metrics explains every None it returns -- a record that
+            # never settled refuses the whole 10/50/90 ladder. Carry the
+            # explanation across instead of "not produced by the supplied
+            # results", which reads as a missing analysis.
+            for metric, note in (tm.get("notes") or {}).items():
+                if metric in ("rise_time", "fall_time", "settling_time",
+                              "slew_rate", "overshoot_pct", "prop_delay"):
+                    why[metric] = note
             put("rise_time", tm.get("rise_time"))
             put("fall_time", tm.get("fall_time"))
             put("settling_time", tm.get("settling_time"))
-            put("slew_rate", tm.get("slew_rate"))
+            # WHICH EDGE the first one is belongs to the testbench, not to
+            # the design: measure.slew_rate signs its answer so a caller can
+            # see which edge it measured, and passing that sign into the spec
+            # made eval/tasks/analog/class_ab_output_001.yaml's
+            # `slew_rate: {min: 100.0}` fail at -1.0 for every design whose
+            # stimulus happens to fall first, whatever the circuit did. The
+            # SPEC is about magnitude; the sign stays in tran_metrics.
+            sr = tm.get("slew_rate")
+            put("slew_rate", abs(sr) if sr is not None else None)
             put("overshoot_pct", tm.get("overshoot_pct"))
-            # Propagation delay needs an input reference; use it when present.
-            in_key = _pick_output(signals, "in")
-            if in_key and in_key != key:
+            # Propagation delay needs an input reference. _pick_input, NOT
+            # _pick_output: the latter falls back to another OUTPUT.
+            in_key = _pick_input(signals, input_signal)
+            if in_key is None or in_key == key:
+                why["prop_delay"] = (
+                    f"a propagation delay is measured from an INPUT to an "
+                    f"output, and this result carries no input signal "
+                    f"(signals: {sorted(signals)}; output {key!r}). Name the "
+                    f"stimulus vector via `input_signal`, or add it to the "
+                    f"deck's save list. A 50 pct to 50 pct time between two "
+                    f"OUTPUTS is not a propagation delay."
+                )
+            else:
                 t_in, y_in = _signal_xy(signals[in_key])
                 # Both waveforms must be on the SAME time axis for a 50-50
                 # delay to mean anything.
@@ -536,6 +704,7 @@ def extract_specs(specs: Mapping[str, Any],
                   noise: Any = None,
                   stb: Any = None,
                   output_signal: Optional[str] = None,
+                  input_signal: Optional[str] = None,
                   supply_sources: Optional[Iterable[str]] = None,
                   netlist: Optional[str] = None,
                   noise_freq: Optional[float] = None) -> SpecExtraction:
@@ -548,6 +717,11 @@ def extract_specs(specs: Mapping[str, Any],
         output_signal: raw vector name of the circuit output (e.g. "out"). When
             omitted, a node called 'out' is preferred, else the first
             non-branch-current signal.
+        input_signal: raw vector name of the STIMULUS, used for the propagation
+            delay. When omitted, only names that genuinely denote an input
+            ('in', 'vin', 'input', ...) are accepted; there is deliberately no
+            fallback to another output, because a 50 pct to 50 pct time between
+            two outputs is not a propagation delay.
         supply_sources: voltage source names to sum for idd. Defaults to every
             independent-voltage-source branch, which is a guess -- see
             measure.supply_current_report.
@@ -560,15 +734,18 @@ def extract_specs(specs: Mapping[str, Any],
             density is reported only when the spectrum is demonstrably flat at
             the bottom of the sweep, and refused otherwise, because
             spectrum[0] on a 1/f corner is a function of where the sweep was
-            started and not of the circuit.
+            started and not of the circuit. When omitted it is read off the
+            spec itself (`at_freq`); see spec_noise_freq.
 
     Returns:
         SpecExtraction. `values` holds only specs that were genuinely measured.
     """
     refusals: dict[str, str] = {}
+    if noise_freq is None:
+        noise_freq = spec_noise_freq(specs)
     si = _compute_metrics(dc, ac, tran, noise, stb, output_signal,
                           list(supply_sources) if supply_sources else None,
-                          netlist, refusals, noise_freq)
+                          netlist, refusals, noise_freq, input_signal)
 
     out = SpecExtraction(metrics_si=si)
 
@@ -606,19 +783,31 @@ def extract_specs(specs: Mapping[str, Any],
             out.unmeasurable[name] = f"metric {metric!r} has no declared dimension"
             continue
 
-        if dimension == "noise_density":
-            kind = noise_input_kind(netlist)
+        if dimension in ("noise_density", "noise_rms"):
+            # WHICH END of the .noise card decides the family depends on which
+            # end the metric is referred to. The INPUT-referred density and the
+            # integrated input-referred RMS follow the SOURCE named on the card;
+            # the OUTPUT-referred density follows the card's OUTPUT EXPRESSION,
+            # which for ngspice is always a voltage. Running both through
+            # noise_input_kind() divided a V/sqrt(Hz) output measurement by 1e-12
+            # on any current-driven deck.
+            output_referred = metric.startswith("output_")
+            kind = (noise_output_kind(netlist) if output_referred
+                    else noise_input_kind(netlist))
             if kind is None:
+                end = "output expression" if output_referred else "input source"
                 out.unmeasurable[name] = (
-                    "an input-referred noise density is a VOLTAGE density when "
-                    "the .noise card names a voltage source and a CURRENT "
-                    "density when it names a current source, and the result "
-                    "carries no units to say which. Without the netlist a "
-                    f"{unit!r} spec cannot be scaled -- getting it wrong is a "
-                    "factor of 1e12, not a rounding error. Pass `netlist`."
+                    f"the family of {metric!r} comes from the {end} of the "
+                    f"'.noise' card -- a VOLTAGE quantity for 'v(out)' or a "
+                    f"voltage source, a CURRENT quantity for a current source "
+                    f"-- and the result carries no units to say which. Without "
+                    f"the netlist a {unit!r} spec cannot be scaled, and getting "
+                    f"it wrong is a factor of 1e12, not a rounding error. Pass "
+                    f"`netlist`."
                 )
                 continue
-            dimension = f"noise_density_{kind}"
+            dimension = (_NOISE_RMS_DIMENSION[kind] if dimension == "noise_rms"
+                         else f"noise_density_{kind}")
 
         try:
             out.values[name] = convert_from_si(si[metric], dimension, unit)

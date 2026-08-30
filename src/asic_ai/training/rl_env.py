@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from asic_ai import serialization
-from asic_ai.adapters import spec_extract
+from asic_ai.adapters import measure, spec_extract
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +37,19 @@ class DesignState:
     at -1.0. spec_extract.extract_specs() converts these typed results into
     spec-name-keyed scalars in the units the task declares.
     """
+    analysis_netlists: dict[str, str] = field(default_factory=dict)
+    """The deck each stored analysis was actually run on.
+
+    `netlist` is "the deck the episode is currently working on"; this is "the
+    deck that produced dc/ac/tran/noise/stb". They are not the same thing the
+    moment an agent runs one analysis on the design and the next on a separate
+    testbench, and the reward must be measured against the deck the numbers
+    came from. Handing spec_extract the CURRENT netlist let a stability
+    testbench decide the supply polarities of an operating point taken from a
+    different circuit.
+    """
+    noise_freq: float | None = None
+    """Frequency, in Hz, at which the task declares its noise DENSITY spec."""
     history: list[dict[str, Any]] = field(default_factory=list)
     done: bool = False
     success: bool = False
@@ -96,9 +109,17 @@ class CircuitDesignEnv:
         Returns:
             Initial observation string (task specification).
         """
+        specs = task.get("specs", {})
         self.state = DesignState(
             task_id=task.get("id", "unknown"),
-            task_specs=task.get("specs", {}),
+            task_specs=specs,
+            # A noise density is a value at a frequency and the task is the
+            # only thing that knows which. Read it from a task-level
+            # `noise_freq`, else off the spec itself (`at_freq`). Without it
+            # the density is refused on any 1/f spectrum, and a spec that can
+            # never be measured is a silent -1.0 on the task.
+            noise_freq=(task.get("noise_freq")
+                        or spec_extract.spec_noise_freq(specs)),
         )
         self._episode_start = time.time()
 
@@ -246,18 +267,33 @@ class CircuitDesignEnv:
         on a deck with a Vsense in series with the load that turned a true
         198 uA into 378 uA (91 pct high) and a +0.3364 score into -0.5965,
         entirely according to whether netlist.patch had been called first.
+
+        An inline netlist is adopted ONLY AFTER the tool has succeeded, the
+        same way netlist.patch is guarded in step(). Adopting it first meant a
+        FAILED call replaced the episode's deck with the deck that failed:
+        sim.dc on the design (a Vdd plus a 0 V Vsense ammeter), then a sim.ac
+        on a stability testbench with no .ac card, raises NgspiceError and
+        tool_success is False -- and state.netlist was already the testbench.
+        spec.check then resolved the supply polarities of the design's
+        operating point out of a deck that has no Vsense, so the ammeter was
+        summed as a second rail and idd read 0.36 mA against a true 0.18 mA:
+        exactly 2x, the D7/N5 failure returning by a third route.
         """
         netlist = args.get("netlist", self.state.netlist)
         if not netlist:
             return {"error": "No netlist provided"}
-        if args.get("netlist"):
-            self.state.netlist = args["netlist"]
+        inline = args.get("netlist")
 
         # Use mock adapter's methods if available
         if hasattr(self.adapter, sim_type):
             method = getattr(self.adapter, sim_type)
             # Mock adapter returns Pydantic models, convert to dict
             result = method(netlist, args)
+            failed = isinstance(result, dict) and result.get("error")
+            if not failed:
+                if inline:
+                    self.state.netlist = inline
+                self.state.analysis_netlists[sim_type] = netlist
             if hasattr(result, "model_dump"):
                 # Keep the typed result: spec_extract needs the structure, not
                 # the flattened dump, to derive spec-name-keyed scalars.
@@ -265,16 +301,25 @@ class CircuitDesignEnv:
                 return result.model_dump()
             return result if isinstance(result, dict) else {"result": str(result)}
 
+        # No adapter method: nothing was simulated, so nothing is adopted. A
+        # deck the simulator never saw must not become the deck the reward is
+        # measured against.
         return {"status": "simulated", "type": sim_type}
 
     def _run_corners(self, args: dict) -> dict:
-        """Run corner simulation."""
+        """Run corner simulation.
+
+        The inline netlist is adopted only after the corner run has succeeded,
+        for the reason spelled out in _run_sim: a deck that FAILED must never
+        become the deck the reward is measured against.
+        """
         if hasattr(self.adapter, "corners"):
             netlist = args.get("netlist", self.state.netlist)
-            if args.get("netlist"):
-                self.state.netlist = args["netlist"]
             corners = args.get("corners", ["tt", "ss", "ff"])
             result = self.adapter.corners(netlist, corners)
+            if args.get("netlist") and not (
+                    isinstance(result, dict) and result.get("error")):
+                self.state.netlist = args["netlist"]
             if isinstance(result, list):
                 return {"corners": [r.model_dump() if hasattr(r, "model_dump") else r for r in result]}
             return result if isinstance(result, dict) else {"result": str(result)}
@@ -307,8 +352,11 @@ class CircuitDesignEnv:
                 stb=self.state.analyses.get("stb"),
                 # The deck is the only thing that can tell a 0 V sense source
                 # from a supply rail, or spot a current-source-biased block
-                # whose supply current is not in the operating point at all.
-                netlist=self.state.netlist or None,
+                # whose supply current is not in the operating point at all --
+                # but it has to be the deck the numbers CAME FROM, not
+                # whichever deck the episode has reached by now.
+                netlist=self._reward_netlist(),
+                noise_freq=args.get("noise_freq", self.state.noise_freq),
             )
             measured = extraction.values
             unmeasurable = extraction.unmeasurable
@@ -368,6 +416,40 @@ class CircuitDesignEnv:
             "measured": measured,
             "unmeasurable": unmeasurable,
         }
+
+    def _reward_netlist(self) -> str | None:
+        """The deck spec.check must resolve its measurements against.
+
+        Prefer the deck the DC analysis was actually run on: idd is by far the
+        largest consumer of the netlist, and it is read out of that operating
+        point. Fall back to the noise deck (the .noise card is what decides
+        whether an input-referred density is volts or amperes), then to the
+        episode's current deck.
+
+        Whichever it is, it is checked the way ngspice_shared._netlist_for
+        checks its own: every '<name>#branch' in the operating point must be an
+        element card of that deck. That guard exists precisely so a stale deck
+        can never be applied to an earlier result, and the reward path used to
+        walk straight past it by handing state.netlist to spec_extract.
+        """
+        netlist = (self.state.analysis_netlists.get("dc")
+                   or self.state.analysis_netlists.get("noise")
+                   or self.state.netlist or None)
+        if not netlist:
+            return None
+        dc = self.state.analyses.get("dc")
+        op = getattr(dc, "op_points", None) or {}
+        wanted = {k.split("#")[0].lower().split(".")[-1]
+                  for k in op if "#branch" in str(k).lower()}
+        if wanted and not wanted <= measure.parse_deck_sources(netlist).elements:
+            logger.warning(
+                "spec.check: the deck on hand does not contain the source(s) "
+                "%s that this operating point reports a branch current for, so "
+                "it did not produce this result and is NOT used to resolve the "
+                "supply current", sorted(wanted),
+            )
+            return None
+        return netlist
 
     def _score(self, specs: dict[str, Any],
                measured: dict[str, float]) -> float | None:

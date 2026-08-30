@@ -435,6 +435,23 @@ def _dc_sweep_axis(vecs: dict[str, list]) -> Optional[str]:
     return None
 
 
+def _axis_reversals(x: Sequence[float]) -> int:
+    """How many times a sweep axis changes direction.
+
+    Zero for any single sweep, in either direction. A NESTED '.dc' -- ngspice
+    flattens the two loops into one vector -- reverses once per outer step.
+    """
+    signs = [1 if b > a else (-1 if b < a else 0)
+             for a, b in zip(x, list(x)[1:])]
+    signs = [s for s in signs if s]
+    return sum(1 for a, b in zip(signs, signs[1:]) if a != b)
+
+
+def _is_monotone_axis(x: Sequence[float]) -> bool:
+    """True when a sweep axis never doubles back on itself."""
+    return _axis_reversals(x) == 0
+
+
 def _real(values: Sequence) -> list[float]:
     """Real projection of a vector that may be real or complex."""
     out: list[float] = []
@@ -939,6 +956,31 @@ class NgspiceSharedAdapter(SimulatorAdapter):
                 )
             else:
                 x_values = _real(vecs[x_name])
+                # A NESTED sweep -- '.dc V1 0 1 0.5 V2 0 1 0.5' -- is written by
+                # ngspice as ONE flat vector per signal, with the inner sweep
+                # repeated once per outer value, so the axis reads
+                # [0, 0.5, 1, 0, 0.5, 1, 0, 0.5, 1]. The DATA is complete and a
+                # device I-V family is a legitimate analysis, so it is kept --
+                # but it is a 2-D grid flattened, not a curve, and nothing said
+                # so. Everything that interpolates along it, or takes a span
+                # across it as a signal excursion, is silently answering a
+                # different question. Flagged here and refused downstream (see
+                # spec_extract, which will not report an output_swing across a
+                # grid), because a plain max-minus-min over a nested sweep
+                # includes the outer variable's own excursion.
+                reversals = _axis_reversals(x_values)
+                if reversals:
+                    log.warning(
+                        "DC sweep axis %r doubles back %d time(s) over %d "
+                        "points: this is a NESTED '.dc' -- two swept sources -- "
+                        "flattened into one vector, so every signal here is a "
+                        "2-D grid and NOT a curve. The samples are kept, but "
+                        "any metric that interpolates along this axis, or takes "
+                        "max-minus-min across it as a signal excursion, is "
+                        "measuring across the outer sweep as well. Run one "
+                        "'.dc' per outer value to get curves.",
+                        x_name, reversals, len(x_values),
+                    )
                 for name, data in vecs.items():
                     if name == x_name or len(data) != len(x_values):
                         continue
@@ -1347,6 +1389,23 @@ class NgspiceSharedAdapter(SimulatorAdapter):
         does not define comes back as None with the reason under "notes" --
         including dc_gain_db, which is None whenever the sweep does not
         actually reach DC. Read notes before treating a None as a failure.
+
+        THE SIGNAL'S OWN x_values ARE THE FREQUENCY AXIS, not result.frequencies.
+        _build_ac drops the samples where a signal has no transfer function and
+        gives that signal its own axis, so the two lengths legitimately differ.
+        Pairing a shortened y with the full global axis attributes every sample
+        to the wrong frequency: on `.ac LIN 1001 0 1e6` through an AC-coupled
+        stage the f = 0 sample of out is exactly zero and is dropped, leaving
+        1000 y values against 1001 frequencies, and every sample was read one
+        grid step low --
+
+            bandwidth_3db   101510.30 Hz   against 100316.74 Hz (analytic 100 kHz)
+            passband_gain    39.8909 dB    against  39.9862 dB
+            rolloff          None          against -17.033 dB/dec
+
+        -- a shift of one grid step, which on a coarse LIN sweep is arbitrarily
+        large. spec_extract was fixed to honour the signal's own axis; this
+        helper and measure_tran were not.
         """
         mag = result.signals.get(f"vdb({signal})")
         if mag is None:
@@ -1354,19 +1413,42 @@ class NgspiceSharedAdapter(SimulatorAdapter):
                 f"no magnitude signal 'vdb({signal})' in ACResult "
                 f"(have {sorted(result.signals)})"
             )
+        freqs = list(result.frequencies)
+        if mag.x_values and len(mag.x_values) == len(mag.y_values):
+            freqs = list(mag.x_values)
         ph = result.signals.get(f"vp({signal})")
-        return measure.ac_metrics(result.frequencies, mag.y_values,
-                                  ph.y_values if ph else None)
+        phase = ph.y_values if ph else None
+        if phase is not None and len(phase) != len(mag.y_values):
+            # vdb() and vp() share an axis by construction in _build_ac; if they
+            # ever do not, the phase belongs to different frequencies than the
+            # magnitude and no margin taken from the pair would mean anything.
+            log.warning(
+                "measure_ac: 'vp(%s)' has %d samples against %d for 'vdb(%s)'; "
+                "the phase is dropped rather than paired with the wrong "
+                "frequencies", signal, len(phase), len(mag.y_values), signal,
+            )
+            phase = None
+        return measure.ac_metrics(freqs, mag.y_values, phase)
 
     @staticmethod
     def measure_tran(result: TranResult, signal: str = "out") -> dict[str, Any]:
-        """rise_time / fall_time / overshoot / settling_time / slew_rate."""
+        """rise_time / fall_time / overshoot / settling_time / slew_rate.
+
+        The signal's own x_values are the time axis whenever they are present
+        and consistent, for the same reason measure_ac uses them: _build_tran
+        drops the samples where a signal is non-finite and gives that signal
+        its own axis, and pairing a shortened y with the full global time
+        vector shifts every sample against its time.
+        """
         sig = result.signals.get(signal)
         if sig is None:
             raise KeyError(
                 f"no signal '{signal}' in TranResult (have {sorted(result.signals)})"
             )
-        return measure.tran_metrics(result.time, sig.y_values)
+        t = list(result.time)
+        if sig.x_values and len(sig.x_values) == len(sig.y_values):
+            t = list(sig.x_values)
+        return measure.tran_metrics(t, sig.y_values)
 
     def measure_idd(self, result: DCResult,
                     sources: Optional[Iterable[str]] = None,
