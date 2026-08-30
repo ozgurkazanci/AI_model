@@ -1153,3 +1153,76 @@ def test_c6_crossing_freq_no_longer_claims_ac_metrics_uses_it_for_ugb():
     doc = " ".join((measure.crossing_freq.__doc__ or "").split())
     assert "unity-gain crossing ABOVE the peak-gain frequency" not in doc
     assert "closure_freq" in doc
+
+
+@skipif_no_ngspice
+class TestR1SweepStartingAtZeroHertz:
+    """R1: `.ac LIN n 0 fstop` disabled the inversion inference entirely.
+
+    ngspice accepts a linear AC sweep starting at 0 Hz. local_slope() refuses at
+    f0 <= 0, so bode_phase_estimate() returned None, so ac_metrics never called
+    phase_inversion_shift -- not even for the 2*pi branch correction. An
+    inverting loop kept its 180 deg and reported itself STABLE: PM +163.36 on a
+    real deck whose reference sweep gives -17.07.
+
+    The logic was inverted. f = 0 is not the least informative sample, it is the
+    most informative one: it IS the DC point, and "is this loop inverting" is
+    exactly "what is the sign of H at DC". A minimum-phase network has no
+    rolloff-induced lag at DC, so a non-inverting response reads 0 deg there by
+    construction, and an inverting one reads 180 -- both exactly, as measured.
+    """
+
+    # 3 poles at 1 k / 100 k / 200 k, forward gain 1000.
+    _LOOP = (
+        "* {label} 3-pole broken loop\n"
+        "V1 in 0 AC 1 DC 0\n"
+        "E1 a 0 in 0 {gain}\n"
+        "R1 a b 1k\nC1 b 0 159.155n\n"
+        "R2 b c 1k\nC2 c 0 1.59155n\n"
+        "R3 c out 1k\nC3 out 0 795.77p\n"
+        "{analysis}\n.end\n"
+    )
+
+    def _metrics(self, adapter, gain, analysis, label):
+        from asic_ai.adapters import measure
+        from asic_ai.tool_interface.schema import SimParams
+
+        deck = self._LOOP.format(label=label, gain=gain, analysis=analysis)
+        res = adapter.ac(deck, SimParams(analysis_type="ac"))
+        mag = res.signals["vdb(out)"]
+        ph = res.signals["vp(out)"]
+        # Pair each signal with its OWN x axis: a sample with no transfer
+        # function is dropped, so the global frequency list can be longer.
+        return measure.ac_metrics(mag.x_values, mag.y_values, ph.y_values)
+
+    def test_an_inverting_loop_swept_from_zero_is_still_unstable(self, adapter):
+        """The defect, stated as the number it produced."""
+        m = self._metrics(adapter, "-1000", ".ac lin 801 0 1e8", "inverting")
+        assert m["phase_inversion_k"] == 1.0, "the inversion must be detected at DC"
+        assert m["phase_margin"] is not None
+        assert m["phase_margin"] < 0.0, (
+            f"reported PM {m['phase_margin']:+.2f} deg for an unstable loop; "
+            "the defect reported +163.36")
+        assert m["phase_margin"] == pytest.approx(-16.64, abs=1.0)
+        assert m["gain_margin"] is not None and m["gain_margin"] < 0.0
+
+    def test_both_sweep_forms_agree_on_the_same_circuit(self, adapter):
+        """A metric must not depend on how the caller spelled the sweep."""
+        lin = self._metrics(adapter, "-1000", ".ac lin 801 0 1e8", "inverting")
+        dec = self._metrics(adapter, "-1000", ".ac dec 100 1 1e8", "inverting")
+        assert lin["phase_inversion_k"] == dec["phase_inversion_k"] == 1.0
+        # The residual difference is the linear grid's 125 kHz spacing against a
+        # log sweep, not a difference in logic.
+        assert lin["phase_margin"] == pytest.approx(dec["phase_margin"], abs=1.0)
+
+    def test_a_non_inverting_loop_swept_from_zero_gains_no_false_inversion(self, adapter):
+        m = self._metrics(adapter, "1000", ".ac lin 801 0 1e8", "non-inverting")
+        assert m["phase_inversion_k"] == 0.0
+        assert m["phase_margin"] == pytest.approx(-16.64, abs=1.0)
+
+    def test_the_dc_sample_is_recorded_as_the_reference(self, adapter):
+        """So a reader can tell which evidence the answer rests on."""
+        at_zero = self._metrics(adapter, "-1000", ".ac lin 801 0 1e8", "inverting")
+        from_one = self._metrics(adapter, "-1000", ".ac dec 100 1 1e8", "inverting")
+        assert at_zero.get("phase_reference") == "dc"
+        assert from_one.get("phase_reference") == "bode"

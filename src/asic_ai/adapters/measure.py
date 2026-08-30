@@ -709,22 +709,59 @@ def ac_metrics(freqs: Sequence[float], gain_db: Sequence[float],
     k = 0
     if phase_deg is not None:
         ph = unwrap_deg(list(phase_deg)[:n])
-        expected = bode_phase_estimate(slope)
+
+        # A sample AT 0 Hz is the DC point, and the inversion question is
+        # exactly "what is the sign of H at DC", so it answers itself. A
+        # minimum-phase network has no rolloff-induced lag at DC, so a
+        # non-inverting response shows 0 deg there by construction and no Bode
+        # estimate is needed. Measured on real decks: an inverting loop swept
+        # with `.ac lin n 0 fstop` reads exactly 180.000 at f = 0 and a
+        # non-inverting one exactly 0.000.
+        #
+        # Treating f = 0 as "no measurable slope, therefore no information"
+        # inverted the logic and disabled the inference on the one sweep form
+        # that settles it outright.
+        #
+        # The magnitude is the guard: an AC-coupled network has H(0) = 0, and a
+        # sample with no transfer function is already dropped upstream, so a
+        # surviving 0 Hz sample with a finite magnitude is a real DC reading.
+        at_dc = (f[0] == 0.0 and n > 0 and math.isfinite(float(g[0])))
+        expected = 0.0 if at_dc else bode_phase_estimate(slope)
+
         if normalize_phase and expected is not None:
             k = phase_inversion_shift(ph, ref_index=0, expected_deg=expected)
             if k:
                 ph = [p - 180.0 * k for p in ph]
+        elif normalize_phase:
+            # The 180 deg question is unanswerable here, but a 2*pi offset is
+            # an artefact of atan2's principal branch and never information.
+            # Skipping the call entirely left it in, which is what made a plain
+            # 3-pole amplifier's gain margin vanish.
+            k = 2 * int(round(ph[0] / 360.0)) if ph else 0
+            if k:
+                ph = [p - 180.0 * k for p in ph]
         out["phase_inversion_k"] = float(k)
+        out["phase_reference"] = "dc" if at_dc else (
+            "bode" if expected is not None else "unresolved")
         if k:
             kind = ("an inversion of" if k % 2 else
                     "a 2*pi branch artefact of")
+            if at_dc:
+                where = ("the sample at 0 Hz, which IS the DC point, where a "
+                         "non-inverting minimum-phase response shows 0 deg")
+            elif expected is not None:
+                where = (f"f_start = {f[0]:g} Hz, where a minimum-phase "
+                         f"response with the measured {slope:.4g} dB/decade "
+                         f"slope would show {expected:.4g} deg")
+            else:
+                where = (f"f_start = {f[0]:g} Hz; the 180 deg question was "
+                         f"unanswerable from this data, so only the 2*pi "
+                         f"branch was corrected")
             notes["phase"] = (
                 f"{kind} {180.0 * k:+g} deg was removed. It was inferred at "
-                f"f_start = {f[0]:g} Hz, where a minimum-phase response with "
-                f"the measured {slope:.4g} dB/decade slope would show "
-                f"{expected:.4g} deg. An ODD multiple of 180 deg is a real "
-                f"sign inversion; an EVEN one is only atan2's principal "
-                f"branch, which carries no information."
+                f"{where}. An ODD multiple of 180 deg is a real sign "
+                f"inversion; an EVEN one is only atan2's principal branch, "
+                f"which carries no information."
             )
         elif normalize_phase and expected is None:
             notes["phase"] = (
