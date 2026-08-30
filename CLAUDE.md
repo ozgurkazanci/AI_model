@@ -30,6 +30,47 @@ Guarded by `tests/test_system_prompt_consistency.py` (43 tests): one prompt
 variant across the corpus, contract-only tool names, and no module referencing
 `SYSTEM_PROMPT` outside `format.py`.
 
+## What Was Fabricated, and How It Stayed Hidden
+
+Read this before trusting any number in this repo's history. Five layers
+reported success without doing their job, each invisible because the layer
+above accepted whatever it was handed.
+
+| Layer | What it claimed | What it did |
+|---|---|---|
+| `adapters/ngspice_shared.py` | "16 circuits verified" | regex-grepped the console for a row count and returned `y_values=[0.0]*n`, `x_values=range(n)`. No numeric result ever reached the model. |
+| `scripts/grpo_ngspice.py` | GRPO validated, 100 episodes | reward was a CONSTANT 0.1 with `dc_gain` pinned at -40.0 dB across four wildly different designs. Group variance exactly zero, so the advantage was sort-order noise. |
+| `inference/parser.py` | "ChatML tool_call format" | only matched `<function=...>`, which occurs 0 times in the SFT data. Parsed 0 of 4322 tool calls. The model could emit a perfect call and the loop saw nothing. |
+| `eval/runner.py` | 78 eval tasks | returned `passed=True, score=85.5` for every task. `eval/baseline.py` was a bare `pass`. |
+| `optimizer/bayesian.py` | Bayesian optimization | returned each parameter's lower bound, score 0.0, `converged=True`, having called `eval_fn` zero times. |
+
+Two more in the data itself: 657 of 1050 SFT examples carried a different system
+prompt from the other 393, and three tool calls named tools that do not exist.
+
+The common shape: **a placeholder that returns a plausible success value rather
+than failing.** Tests passed throughout, because they asserted `is not None`,
+point counts, or the placeholder's own output.
+
+### Rules that follow from it
+
+1. **Never return a plausible value you did not compute.** `None` with a reason
+   is handled everywhere in this codebase (`spec_extract` reports it as
+   unmeasurable, `rl_env` scores only what was measured). A confident wrong
+   number is handled nowhere and trains the model on a lie.
+2. **Assert physics, not shape.** `assert result is not None` and
+   `assert len(x) > 0` are what let zeros survive 67 phases. Assert a number
+   against a hand calculation, with a tolerance tight enough to fail.
+3. **Prove the test catches the bug.** Reintroduce the defect, watch the test
+   fail, restore. A regression test that passes against the broken code
+   certifies the bug as fixed forever.
+4. **`x = arg or discover()` cannot express "explicitly none".** This mistake
+   appeared three times here (`LlamaServer(binary=...)`,
+   `ASIC_AI_LLAMA_CPP_DIR`, `run_task(engine=...)`), each time hiding exactly
+   the path the caller was trying to test. Use a sentinel.
+5. **Fix the generator, not the data.** Phase 68 patched contract-violating tool
+   calls out of `data/sft/`; the next regeneration put them straight back,
+   because `scripts/generate_debug_sft.py` was never touched.
+
 ## API Gotchas (transformers 5.16.1)
 
 - `TrainingArguments`: use `warmup_steps` NOT `warmup_ratio`, use `use_cpu` NOT `no_cuda`
@@ -61,7 +102,10 @@ variant across the corpus, contract-only tool names, and no module referencing
 - **DLL**: `C:\Program Files\KiCad\10.0\bin\ngspice.dll` (KiCad bundled)
 - **Adapter**: `src/asic_ai/adapters/ngspice_shared.py` (ctypes, NOT subprocess)
 - **Factory**: `get_adapter("ngspice_shared", binary_path="", work_dir="...")`
-- **16 verified circuits**: CS amp, inverter, RC filter, NMOS I-V, diff pair, ring osc (3+5 stage), bandgap, current mirror, cascode, source follower, active load, integrator, Widlar, temp sweep, voltage divider
+- **Circuits**: CS amp, inverter, RC filter, NMOS I-V, diff pair, ring osc (3+5 stage),
+  bandgap, current mirror, cascode, source follower, active load, integrator, Widlar,
+  temp sweep, voltage divider. These run; the adapter returns REAL vector data since
+  Phase 69. The earlier "16 verified" claim meant only that ngspice did not crash.
 - **SFT data**: `data/sft/ngspice_real_v1.jsonl` + `ngspice_real_v2.jsonl` (16 examples from real simulation)
 
 ## Cadence EDA Suite (WSL)
@@ -88,7 +132,7 @@ variant across the corpus, contract-only tool names, and no module referencing
 ## Project Commands
 
 ```bash
-PYTHONPATH=src python -m pytest tests/ -v          # Run tests (187 passed)
+PYTHONPATH=src python -m pytest tests/ -v          # Run tests (641 passed)
 PYTHONPATH=src python scripts/project_stats.py     # Show stats
 PYTHONPATH=src python scripts/demo_ai_ngspice.py   # E2E AI+ngspice demo
 PYTHONPATH=src python scripts/demo_rl_ngspice.py   # RL env + ngspice
@@ -103,7 +147,7 @@ PYTHONPATH=src python scripts/chat.py --model outputs/sft_local/final  # Chat
 
 - Source: `src/asic_ai/` (47 modules)
 - Scripts: `scripts/` (44 CLI tools)
-- Tests: `tests/` (17 files, 187 passed)
+- Tests: `tests/` (26 files, 641 passed)
 - Eval: `eval/tasks/` (74 tasks: 50 analog + 24 digital)
 - Data: `data/sft/` (15 files, 1032 total: 929 train + 103 val)
 - Configs: `configs/eda_tools.yaml`, `configs/training_profiles.yaml`

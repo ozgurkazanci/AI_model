@@ -13,7 +13,7 @@ pip install -r requirements.txt
 
 # Run tests (must pass)
 PYTHONPATH=src python -m pytest tests/ -v --tb=short
-# Expected: 187 passed, 0 skipped
+# Expected: 641 passed, 0 skipped (8 skip when the TSMC PDK is absent)
 
 # Run full pipeline demo
 PYTHONPATH=src python scripts/demo_full_pipeline.py
@@ -62,6 +62,48 @@ PYTHONPATH=src python scripts/normalize_sft_system_prompt.py --write  # repair s
 PYTHONPATH=src python scripts/prepare_training_data.py                # regenerate train/val
 ```
 
+## Read This First: Prior Numbers Are Not Trustworthy
+
+Several layers of this project reported success without doing their job. The
+full table is in `CLAUDE.md` under "What Was Fabricated". In short: the ngspice
+adapter returned arrays of zeros, the GRPO reward was a constant 0.1 regardless
+of design, the tool-call parser matched a format that appears nowhere in the
+training data (0 of 4322 calls parsed), the eval runner returned
+`passed=True, score=85.5` for every task, and the numerical optimizer never
+called its objective function.
+
+Every one of those is fixed and guarded by a test that has been proven to fail
+against the old behaviour. But any measurement recorded before Phase 69 was
+taken through at least one of them, so treat historical results as unverified
+rather than as a baseline.
+
+## What Is Real Now
+
+| Capability | Where | Evidence |
+|---|---|---|
+| Real SPICE vectors | `adapters/ngspice_shared.py` | divider `.op` v(out) = 0.9 exactly; RC f_3dB 159154.88 Hz vs analytic 159154.94 |
+| TSMC CRN65GPLUS | `adapters/pdk_deck.py` | inverter trip point moves with corner (tt .4941 / ss .4986 / ff .4878 / sf .5243 / fs .4642); seeded statistical MC, sd 6.44 pct |
+| Metrics | `adapters/measure.py` | ac/tran/noise/supply metrics, `None` rather than a wrong number |
+| Results -> specs | `adapters/spec_extract.py` | 117 spec names normalised, per-task unit conversion, unmeasurable reported not dropped |
+| Tool-call parsing | `inference/parser.py` | 4322/4322 corpus calls parsed; contract validation |
+| Eval | `eval/runner.py`, `eval/baseline.py` | real agent loop; refuses to score without a model |
+| Device sizing | `optimizer/scipy_opt.py`, `optimizer/circuit.py` | finds R2 = 10.0115k vs analytic 10k from simulation alone, 40 evaluations |
+| iGPU inference | `inference/llama_server.py` | AMD 780M via Vulkan, 74.7 tok/s Q4_K_M vs 49.0 on CPU |
+
+## Local Inference on the iGPU
+
+```bash
+PYTHONPATH=src python scripts/gpu_probe.py            # what actually works here
+PYTHONPATH=src python scripts/serve_local.py          # serve on the 780M
+PYTHONPATH=src python scripts/serve_local.py --prompt "Design a two-stage OTA in sky130."
+```
+
+`GGML_VK_DISABLE_COOPMAT=1` in `configs/local_inference.yaml` is load-bearing:
+this AMD driver does not expose the Vulkan extensions llama.cpp's coopmat path
+requires, and without the flag every model load dies with
+`ErrorExtensionNotPresent`. It costs the matrix cores, so re-benchmark and try
+removing it after a driver update.
+
 ## Architecture
 
 ```
@@ -80,7 +122,7 @@ Results → back to LLM for next step
 
 | Adapter | Backend Key | Method | Status |
 |---------|-------------|--------|--------|
-| `ngspice_shared.py` | `ngspice_shared` | KiCad DLL via ctypes | **16 circuits verified** |
+| `ngspice_shared.py` | `ngspice_shared` | KiCad DLL via ctypes | **real vector data** (ngGet_Vec_Info) |
 | `spectre_wsl.py` | `spectre` | WSL subprocess | **24.1.0 binary working** (needs license) |
 | `mock.py` | `mock` | In-memory mock | Always available |
 
@@ -88,7 +130,7 @@ Results → back to LLM for next step
 
 ```
 CPT (optional) → SFT (DONE!) → RL/GRPO (ready)
-                   ↑ 1040 examples    ↑ 100 episodes validated
+                   ↑ 1050 examples    ↑ see the warning below
                    loss: 2.18 → 0.005
 ```
 
@@ -96,8 +138,8 @@ CPT (optional) → SFT (DONE!) → RL/GRPO (ready)
 
 - **Loss**: 2.176 → 0.00462 (99.8% reduction)
 - **Duration**: 8h46m on CPU (267 steps, 3 epochs)
-- **Validation**: 3/5 pass (60%) — tool-calling learned!
-- **Benchmark**: 5/12 pass (47.2%)
+- **Validation**: 3/5 pass (60%) — measured before the parser was fixed; re-measure.
+- **Benchmark**: 5/12 pass (47.2%) — same caveat.
 
 ### SFT Data (1040 examples, 16 data files)
 
@@ -136,10 +178,10 @@ PYTHONPATH=src python scripts/validate_trained_model.py --model outputs/sft_loca
 PYTHONPATH=src python scripts/benchmark_model.py --model outputs/sft_local/final
 ```
 
-### RL/GRPO (Validated)
+### RL/GRPO
 
 ```bash
-# GRPO with real ngspice rewards (100 episodes validated)
+# GRPO with real ngspice rewards
 PYTHONPATH=src python scripts/grpo_ngspice.py --episodes 100
 
 # RL environment demo
@@ -169,7 +211,7 @@ PYTHONPATH=src python scripts/demo_rl_ngspice.py
 - **PyTorch**: 2.5.1+cpu
 - **GPU**: AMD Radeon 780M (iGPU, 4GB shared VRAM)
 - **ngspice**: KiCad 10.0 DLL (`C:\Program Files\KiCad\10.0\bin\ngspice.dll`)
-  - 16 circuits verified with real simulation
+  - real vector extraction since Phase 69
 - **Cadence EDA** (WSL `Alma_EDA` at `/opt/eda/cadence/`):
   - SPECTRE241 (270MB), IC231, PVS222, QUANTUS231, XCELUMMAIN2309
   - DDI251, CONFRML232, MODUS231, SSV231, EMX20251, IC618
@@ -180,8 +222,8 @@ PYTHONPATH=src python scripts/demo_rl_ngspice.py
 ## Project Stats
 
 ```
-v0.3.0 | 55 commits | 187 tests | 0 skip
-432 SFT examples | 74 eval tasks (50 analog + 24 digital)
+v0.4.0 | 641 tests | 0 skip | 26 test files
+1050 SFT examples | 77 eval tasks (53 analog + 24 digital)
 13 templates | 16 ngspice circuits | 3 adapters
 ~40 scripts | ~47 modules | ~17,000 lines
 ```
