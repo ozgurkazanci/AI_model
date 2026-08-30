@@ -1,0 +1,73 @@
+# Local inference on the AMD Radeon 780M iGPU via llama.cpp + Vulkan.
+#
+# Why Vulkan and not DirectML: torch-directml 0.2.5 is built against the
+# torch 2.4.1 ABI and fails to import under this project's torch 2.5.1+cpu
+# ("DLL load failed while importing torch_directml_native"). Downgrading torch
+# would break transformers 5.16.1 and checkpoint resume. llama.cpp's Vulkan
+# backend needs no Python bindings at all and is the better path on RDNA3.
+#
+# Why a server and not in-process bindings: PyPI ships llama-cpp-python only as
+# a source tarball, and building it with Vulkan needs MSVC + CMake + the Vulkan
+# SDK. The prebuilt llama.cpp binaries expose an OpenAI-compatible HTTP API,
+# which asic_ai.inference.APIEngine already speaks.
+#
+# Nothing here is required for the test suite. Every path is probed at runtime
+# and every backend degrades to CPU, so a machine without any of this still
+# works.
+
+backend: llama_server        # llama_server | api | transformers
+
+llama_cpp:
+  # Directory holding llama-server.exe / llama-cli.exe / llama-bench.exe.
+  # Override with ASIC_AI_LLAMA_CPP_DIR.
+  dir: "C:/Users/ozgur/tools/llamacpp-vulkan"
+
+  # Conversion tooling (convert_hf_to_gguf.py + the conversion/ package).
+  # Only needed to produce new GGUF files, not to run them.
+  src_dir: "C:/Users/ozgur/tools/llamacpp-src"
+
+server:
+  host: "127.0.0.1"
+  port: 8231
+  context_size: 8192
+  # -1 / 99 both mean "offload every layer". 0 forces CPU.
+  n_gpu_layers: 99
+  # Seconds to wait for /health after launch.
+  startup_timeout: 90
+
+  env:
+    # REQUIRED on this machine, and it costs performance.
+    #
+    # The AMD driver in use (32.0.13046.2004, April 2025) does not expose
+    # VK_KHR_shader_bfloat16 or VK_EXT_pipeline_robustness, which llama.cpp's
+    # KHR_coopmat path requests unconditionally. Without this flag every model
+    # load dies with:
+    #     vk::PhysicalDevice::createDevice: ErrorExtensionNotPresent
+    # Setting it disables the cooperative-matrix (matrix core) path, so the
+    # measured speedups below are WITHOUT matrix cores. The device does report
+    # "matrix cores: KHR_coopmat", so a newer driver should let this be removed
+    # -- re-benchmark before and after if you update the driver.
+    GGML_VK_DISABLE_COOPMAT: "1"
+
+models:
+  # Produced by: merge_lora.py -> convert_hf_to_gguf.py -> llama-quantize.exe
+  default: "models/gguf/asic-ai-0.5b-q4_k_m.gguf"
+  f16: "models/gguf/asic-ai-0.5b-f16.gguf"
+
+# Measured on this machine with llama-bench, coopmat disabled, 780M.
+# ngl 0 = compute on CPU, ngl 99 = all layers on the iGPU.
+# Kept here as the baseline to compare against after a driver update.
+benchmarks:
+  q4_k_m:
+    cpu:  {pp512: 1650.8, tg128: 49.0}
+    igpu: {pp512: 2443.5, tg128: 74.7}
+  f16:
+    cpu:  {pp512: 1199.5, tg128: 19.8}
+    igpu: {pp512: 1580.9, tg128: 33.5}
+
+# The 780M has a 3.75 GiB BIOS UMA carve-out plus a 13.88 GiB host-visible
+# (GTT) heap. llama.cpp reports the combined 18309 MiB and will use it, so
+# raising the UMA frame buffer in BIOS is not required.
+device:
+  name: "AMD Radeon 780M Graphics"
+  vulkan_reported_mib: 18309

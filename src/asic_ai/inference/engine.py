@@ -50,15 +50,64 @@ class VLLMEngine(ModelEngine):
         return len(text.split())
 
 class APIEngine(ModelEngine):
-    """Remote model via OpenAI-compatible API."""
-    
-    def __init__(self, base_url: str, api_key: str, model: str):
-        self.base_url = base_url
+    """Remote model via an OpenAI-compatible API.
+
+    Real implementation over urllib, so it adds no dependency. Works against any
+    /v1/chat/completions endpoint, including llama.cpp's own server -- see
+    asic_ai.inference.llama_server.LlamaServerEngine for the local iGPU variant,
+    which adds process lifecycle and exact tokenisation.
+
+    Messages are passed through unchanged. That matters: the system message must
+    stay byte-identical to build_system_message(), and any client-side
+    re-templating is how training/serving prompt drift gets reintroduced.
+    """
+
+    def __init__(self, base_url: str, api_key: str = "", model: str = "local",
+                 timeout: int = 300):
+        self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
-        
+        self.timeout = timeout
+
     def generate(self, messages: List[Dict[str, Any]], **kwargs) -> GenerationResult:
-        return GenerationResult(text="", prompt_tokens=0, completion_tokens=0)
-        
+        import json
+        import urllib.request
+
+        payload: Dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": kwargs.get("temperature", 0.7),
+            "top_p": kwargs.get("top_p", 0.95),
+            "max_tokens": kwargs.get("max_new_tokens", kwargs.get("max_tokens", 1024)),
+        }
+        if "stop" in kwargs:
+            payload["stop"] = kwargs["stop"]
+
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+
+        req = urllib.request.Request(
+            f"{self.base_url}/v1/chat/completions",
+            data=json.dumps(payload).encode("utf-8"),
+            headers=headers,
+        )
+        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            data = json.loads(resp.read())
+
+        choice = (data.get("choices") or [{}])[0]
+        usage = data.get("usage") or {}
+        return GenerationResult(
+            text=(choice.get("message") or {}).get("content", ""),
+            prompt_tokens=int(usage.get("prompt_tokens", 0)),
+            completion_tokens=int(usage.get("completion_tokens", 0)),
+            finish_reason=choice.get("finish_reason") or "stop",
+        )
+
     def get_token_count(self, text: str) -> int:
-        return len(text.split())
+        """Rough estimate -- a generic endpoint exposes no tokenizer.
+
+        Roughly 4 characters per token. Do NOT use this for context budgeting;
+        use a backend that can tokenise exactly (LlamaServerEngine does).
+        """
+        return max(1, len(text) // 4)
