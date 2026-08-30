@@ -15,3 +15,8 @@ protobuf
 
 # Training (install with: pip install -r requirements.txt -r requirements-train.txt)
 # See requirements-train.txt for GPU training dependencies
+
+# mikroelektronix desktop app. Renders through the system WebView2
+# rather than bundling a browser, so this is ~15 MB, not ~300.
+# Only needed to OPEN A WINDOW -- the app's logic is testable headless.
+pywebview>=5.0
