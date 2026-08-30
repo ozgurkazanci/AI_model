@@ -287,7 +287,14 @@ class SpectreWSLAdapter(SimulatorAdapter):
 
         stdout, rc = self._run_spectre(netlist, output_dir)
 
-        return NoiseResult(frequencies=[], input_noise=[], output_noise=[])
+        # The schema declares input_noise/output_noise as SignalData. Passing
+        # lists raised a pydantic ValidationError on every call, so this method
+        # had never run. The parsing of Spectre's noise output is genuinely not
+        # implemented, so refuse rather than return empty spectra that read as
+        # a successful measurement of no noise.
+        raise NotImplementedError(
+            "spectre noise(): the .noise output parser is not implemented. "
+            "Use get_adapter('ngspice_shared') for a working noise analysis.")
 
     def stb(self, netlist: str, params: SimParams) -> StabilityResult:
         """Run stability (STB) analysis — Spectre-specific."""
@@ -308,10 +315,16 @@ class SpectreWSLAdapter(SimulatorAdapter):
             if gm_match:
                 gm = float(gm_match.group(1))
 
+        # loop_gain is declared SignalData; passing {} raised a
+        # ValidationError, so the real PM/GM parsed above never reached a
+        # caller. The loop gain CURVE is not parsed from the Spectre log, so it
+        # is returned empty and named as such -- an empty curve is honest,
+        # a dict is a crash.
         return StabilityResult(
             phase_margin=pm,
             gain_margin=gm,
-            loop_gain={},
+            loop_gain=SignalData(name="loop_gain_not_parsed",
+                                 x_values=[], y_values=[]),
         )
 
     def corners(self, netlist: str, params: SimParams) -> list[CornerResult]:
