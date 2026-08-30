@@ -96,15 +96,55 @@ class DummyOptimizer:
 
 import asyncio
 
-def test_full_trajectory_creation(mock_adapter):
-    agent_config = AgentConfig(max_steps=2)
-    loop = AgentLoop(model=DummyModel(), simulator=mock_adapter, optimizer=DummyOptimizer(), config=agent_config)
-    
-    task = EvalTask(spec={"gain": {"min": 60}})
-    trajectory = asyncio.run(loop.run(task))
-    
-    # Loop should complete
-    assert trajectory.status == "max_steps_reached"
+def test_a_model_that_cannot_generate_is_an_error_not_a_completed_episode(mock_adapter):
+    """DummyModel has no generate(). The old loop ran zero steps and reported
+    status="max_steps_reached", i.e. it claimed to have exhausted a 2-step
+    budget without ever calling anything."""
+    loop = AgentLoop(model=DummyModel(), simulator=mock_adapter,
+                     optimizer=DummyOptimizer(), config=AgentConfig(max_steps=2))
+    trajectory = asyncio.run(loop.run(EvalTask(spec={"gain": {"min": 60}})))
+
+    assert trajectory.status == "error"
+    assert "generate" in trajectory.final_result["error"]
+    assert trajectory.steps == []
+
+
+def test_a_real_engine_produces_a_real_trajectory(mock_adapter):
+    """A scripted engine drives the shared agent loop end to end."""
+    from asic_ai.inference.engine import GenerationResult
+
+    class ScriptedEngine:
+        def __init__(self, replies):
+            self.replies = list(replies)
+
+        def generate(self, messages, **kwargs):
+            text = self.replies.pop(0) if self.replies else "Done."
+            return GenerationResult(text=text, prompt_tokens=1, completion_tokens=1)
+
+    engine = ScriptedEngine([
+        '<tool_call>{"name": "pdk.list_devices", "arguments": {}}</tool_call>',
+        "That is enough for now.",
+    ])
+    loop = AgentLoop(model=engine, simulator=mock_adapter,
+                     optimizer=DummyOptimizer(), config=AgentConfig(max_steps=4))
+    trajectory = asyncio.run(loop.run(EvalTask(spec={"gain": {"min": 60}})))
+
+    assert trajectory.status in ("stopped", "success", "max_steps_reached")
+    assert trajectory.steps, "a real engine must produce a real trajectory"
+    assert trajectory.steps[0]["tool_calls"] == ["pdk.list_devices"]
+
+
+def test_stuck_detection_needs_repetition_not_just_length(mock_adapter):
+    """The old check fired on trajectory LENGTH, so a productive episode was
+    declared stuck."""
+    loop = AgentLoop(model=DummyModel(), simulator=mock_adapter,
+                     optimizer=DummyOptimizer(),
+                     config=AgentConfig(max_retries_same_error=3))
+    varied = Trajectory(steps=[{"tool_calls": [n]} for n in
+                               ("sim.dc", "sim.ac", "spec.check", "sim.tran")])
+    repeated = Trajectory(steps=[{"tool_calls": ["sim.ac"]} for _ in range(4)])
+    assert loop._check_stuck(varied) is False
+    assert loop._check_stuck(repeated) is True
 
 def test_mock_consistency(mock_adapter, sample_netlist):
     params = SimParams(analysis_type="ac")

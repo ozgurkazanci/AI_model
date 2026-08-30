@@ -156,8 +156,7 @@ def run_task(task_path: Path, model_id: str = "local", *,
                           wall_time_sec=time.time() - start, trajectory=[],
                           error="no simulator adapter available")
 
-    from asic_ai.data.format import build_system_message
-    from asic_ai.inference.parser import ToolCallParser
+    from asic_ai.inference.runner import run_agent_loop
     from asic_ai.reward.reward import RewardFunction
     from asic_ai.training.rl_env import CircuitDesignEnv
 
@@ -171,71 +170,21 @@ def run_task(task_path: Path, model_id: str = "local", *,
     env = CircuitDesignEnv(adapter, reward_fn, max_steps=max_steps)
     env.reset(task)
 
-    parser = ToolCallParser()
-    messages = [
-        {"role": "system", "content": build_system_message()},
-        {"role": "user", "content": format_task_prompt(task)},
-    ]
-
-    score = 0.0
-    passed = False
-    error: Optional[str] = None
-    steps = 0
-
-    try:
-        for step in range(max_steps):
-            gen = engine.generate(messages, temperature=temperature,
-                                  max_new_tokens=1024)
-            text = gen.text or ""
-            messages.append({"role": "assistant", "content": text})
-
-            calls = parser.parse(text)
-            parse_errors = parser.parse_errors(text)
-            trajectory.append({
-                "step": step,
-                "assistant": text[:2000],
-                "tool_calls": [c.name for c in calls],
-                "parse_errors": parse_errors,
-            })
-
-            if not calls:
-                # The model stopped calling tools. Whatever score stands, stands.
-                if parse_errors:
-                    error = f"unparseable tool call at step {step}: {parse_errors[0]}"
-                break
-
-            for call in calls:
-                ok, why = parser.validate_tool_call(call)
-                if not ok:
-                    observation = json.dumps({"error": why})
-                else:
-                    result = env.step({"name": call.name, "arguments": call.arguments})
-                    observation = result.observation
-                    if call.name == "spec.check":
-                        try:
-                            payload = json.loads(observation)
-                            score = float(payload.get("score", score))
-                            passed = bool(payload.get("passed", passed))
-                        except (json.JSONDecodeError, TypeError, ValueError):
-                            pass
-                messages.append({"role": "tool", "content": observation[:4000]})
-                trajectory[-1].setdefault("observations", []).append(observation[:1000])
-
-            steps = step + 1
-            if passed:
-                break
-    except Exception as exc:  # a broken run must not look like a failed design
-        error = f"{type(exc).__name__}: {exc}"
-        log.warning("task %s aborted: %s", task_id, error)
+    # One implementation of the agent loop, shared with InferenceRunner.
+    # Three copies of it existed before (here, inference/runner.py and
+    # agent/loop.py); two of the three produced nothing at all.
+    run = run_agent_loop(task, engine, env, max_steps=max_steps,
+                         temperature=temperature,
+                         user_prompt=format_task_prompt(task))
 
     return EvalResult(
-        task_id=task_id,
-        passed=passed,
-        final_score=score,
-        steps=steps,
+        task_id=run.task_id if run.task_id != "unknown" else task_id,
+        passed=run.passed,
+        final_score=run.final_score,
+        steps=run.steps,
         wall_time_sec=time.time() - start,
-        trajectory=trajectory,
-        error=error,
+        trajectory=run.trajectory,
+        error=run.error,
     )
 
 
