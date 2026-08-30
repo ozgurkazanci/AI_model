@@ -18,7 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from asic_ai.data.format import TOOL_DEFINITIONS
+from asic_ai.data.format import TOOL_DEFINITIONS, build_system_message
 
 SEP = "=" * 60
 

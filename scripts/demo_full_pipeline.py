@@ -34,6 +34,7 @@ from asic_ai.data.format import (
 )
 from asic_ai.data.trajectory import Trajectory, TrajectoryStep, ToolCall
 from asic_ai.training.rl_env import CircuitDesignEnv
+from asic_ai.data.format import build_system_message
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("demo")

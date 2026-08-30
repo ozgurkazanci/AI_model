@@ -25,6 +25,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 
+from asic_ai.data.format import build_system_message
 def load_model_quantized(model_path: str, bits: int = 4):
     """Load model with bitsandbytes quantization."""
     from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
