@@ -239,3 +239,50 @@ def test_the_ui_is_self_contained():
     """pywebview loads it from disk; a CDN would make the app need the network."""
     html = WEB.read_text(encoding="utf-8")
     assert "http://" not in html and "https://" not in html
+
+
+# ------------------------------------------------------------- launching ---
+
+def test_serve_reuses_a_running_server_instead_of_starting_a_second(monkeypatch,
+                                                                    capsys):
+    """Starting a second server cannot bind the port, but wait_until_healthy
+    would find the EXISTING one and report success -- and then the finally block
+    would stop our own failed child while the real server carried on."""
+    import webview
+
+    from asic_ai.inference import llama_server
+    from mikroelektronix import app
+
+    started = []
+
+    class _NeverStarts:
+        def __init__(self, cfg, binary=None):
+            started.append(cfg)
+
+        def start(self, **kw):
+            raise AssertionError("a second server must not be started")
+
+        def stop(self):
+            pass
+
+    monkeypatch.setattr(llama_server, "health", lambda url, timeout=5: True)
+    monkeypatch.setattr(llama_server, "server_binary", lambda *a, **k: Path("x"))
+    monkeypatch.setattr(llama_server, "LlamaServer", _NeverStarts)
+    monkeypatch.setattr(Path, "exists", lambda self: True)
+    monkeypatch.setattr(webview, "create_window", lambda *a, **k: object())
+    monkeypatch.setattr(webview, "start", lambda **k: None)
+    monkeypatch.setattr("sys.argv", ["app", "--serve"])
+
+    assert app.main() == 0
+    assert not started, "the app constructed a second server"
+    assert "reusing it" in capsys.readouterr().out
+
+
+def test_the_launcher_sets_what_a_double_click_does_not(tmp_path):
+    """Explorer gives neither the repo root nor PYTHONPATH, and the import
+    error that follows says nothing useful."""
+    bat = (REPO_ROOT / "mikroelektronix" / "mikroelektronix.bat").read_text(
+        encoding="utf-8", errors="replace")
+    assert 'set "PYTHONPATH=src"' in bat
+    assert 'cd /d' in bat and '%~dp0..' in bat, "must cd to the repository root"
+    assert "--serve" in bat, "a double-click should bring its own model"

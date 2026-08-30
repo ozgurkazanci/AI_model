@@ -63,13 +63,20 @@ def main() -> int:
         if not cfg.model or not Path(cfg.model).exists():
             print(f"GGUF model not found: {cfg.model!r}")
             return 1
-        print(f"starting the model on {cfg.base_url} (ngl={cfg.n_gpu_layers})")
-        server = llama_server.LlamaServer(cfg)
-        try:
-            server.start()
-        except (FileNotFoundError, RuntimeError) as exc:
-            print(f"failed to start the model: {exc}")
-            return 1
+        if llama_server.health(cfg.base_url, timeout=2):
+            # A server is already there. Starting a second one cannot bind the
+            # port, but wait_until_healthy would find the EXISTING server and
+            # report success -- then the finally block would kill our own failed
+            # child while the real server carried on. Reuse it instead.
+            print(f"a model server is already running on {cfg.base_url}; reusing it")
+        else:
+            print(f"starting the model on {cfg.base_url} (ngl={cfg.n_gpu_layers})")
+            server = llama_server.LlamaServer(cfg)
+            try:
+                server.start()
+            except (FileNotFoundError, RuntimeError) as exc:
+                print(f"failed to start the model: {exc}")
+                return 1
 
     api = Api()
     window = webview.create_window(

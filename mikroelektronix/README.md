@@ -4,6 +4,8 @@ A desktop window over the local ASIC design model. Chat with the fine-tuned
 model, watch it call the frozen tool contract, and see the results come back
 from a real simulator.
 
+**Double-click** `mikroelektronix\mikroelektronix.bat`, or from a terminal:
+
 ```bash
 # start the model and the window together
 PYTHONPATH=src python -m mikroelektronix.app --serve
@@ -12,6 +14,17 @@ PYTHONPATH=src python -m mikroelektronix.app --serve
 PYTHONPATH=src python scripts/serve_local.py     # in one terminal
 PYTHONPATH=src python -m mikroelektronix.app     # in another
 ```
+
+There is no `.exe`. The launcher exists because a double-click provides neither
+of the two things the app needs -- the working directory must be the repository
+root, and `PYTHONPATH` must include `src` -- and without them the failure is an
+import error that explains nothing.
+
+`--serve` starts the model for the lifetime of the window and stops it on close.
+If a server is already running it is reused rather than duplicated: a second one
+cannot bind the port, but the health check would find the first and report
+success, and the shutdown would then stop a child that was never serving while
+the real server carried on.
 
 ## Why Python + pywebview
 
