@@ -286,3 +286,35 @@ def test_the_launcher_sets_what_a_double_click_does_not(tmp_path):
     assert 'set "PYTHONPATH=src"' in bat
     assert 'cd /d' in bat and '%~dp0..' in bat, "must cd to the repository root"
     assert "--serve" in bat, "a double-click should bring its own model"
+
+
+# ------------------------------------------------------------ provenance ---
+
+def test_provenance_is_read_from_model_info_not_guessed(tmp_path):
+    """Without this the UI cannot tell yesterday's weights from today's under
+    the same file name -- exactly how a stale model gets trusted."""
+    from mikroelektronix.api import _model_provenance
+
+    gguf = tmp_path / "asic-ai-0.5b-945ex-q4_k_m.gguf"
+    gguf.write_bytes(b"not a real gguf")
+
+    # No MODEL_INFO: None, never a guess.
+    assert _model_provenance(str(gguf)) is None
+
+    info = {"built": "2026-08-30", "sha256_head": "abcd1234ef567890",
+            "training": {"examples": 945, "epochs": 3}}
+    (tmp_path / "asic-ai-0.5b-945ex-q4_k_m.MODEL_INFO.json").write_text(
+        json.dumps(info), encoding="utf-8")
+
+    got = _model_provenance(str(gguf))
+    assert got == {"built": "2026-08-30", "examples": 945, "epochs": 3,
+                   "sha": "abcd1234"}
+
+
+def test_corrupt_model_info_yields_none_not_a_crash(tmp_path):
+    from mikroelektronix.api import _model_provenance
+
+    gguf = tmp_path / "m.gguf"
+    gguf.write_bytes(b"x")
+    (tmp_path / "m.MODEL_INFO.json").write_text("{not json", encoding="utf-8")
+    assert _model_provenance(str(gguf)) is None

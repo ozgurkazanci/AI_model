@@ -109,6 +109,7 @@
       <span><i id="d-model" class="dot"></i>model: <b id="s-model">-</b></span>
       <span><i id="d-sim" class="dot"></i>simülatör: <b id="s-sim">-</b></span>
       <span id="s-device"></span>
+      <span id="s-prov"></span>
     </div>
     <button id="reconnect">Yeniden bağlan</button>
     <button id="clear">Temizle</button>
@@ -216,6 +217,10 @@ async function connect() {
   document.getElementById('d-model').className = 'dot' + (info.model ? ' on' : '');
   document.getElementById('d-sim').className = 'dot' + (info.simulator ? ' on' : '');
   document.getElementById('s-device').textContent = info.device || '';
+  const prov = info.provenance;
+  document.getElementById('s-prov').textContent = prov
+    ? `egitim: ${prov.examples ?? '?'} ornek / ${prov.epochs ?? '?'} epoch (${prov.built ?? '?'})`
+    : '';
   (info.errors || []).forEach(e => addNote(e, true));
 }
 

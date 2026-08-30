@@ -28,6 +28,31 @@ from typing import Any, Callable, Dict, List, Optional
 
 MAX_STEPS = 8
 
+
+def _model_provenance(model_path: str) -> Optional[Dict[str, Any]]:
+    """The MODEL_INFO.json scripts/rebuild_gguf.py writes next to a GGUF.
+
+    Returns None when absent (a hand-built GGUF has no provenance to show),
+    never a guess.
+    """
+    try:
+        from pathlib import Path
+
+        p = Path(model_path)
+        info_path = p.with_name(p.stem + ".MODEL_INFO.json")
+        if not info_path.exists():
+            return None
+        data = json.loads(info_path.read_text(encoding="utf-8"))
+        t = data.get("training") or {}
+        return {
+            "built": data.get("built"),
+            "examples": t.get("examples"),
+            "epochs": t.get("epochs"),
+            "sha": data.get("sha256_head", "")[:8],
+        }
+    except Exception:
+        return None
+
 _TOOL_CALL_RE = re.compile(r"<tool_call>.*?</tool_call>", re.DOTALL)
 
 
@@ -67,6 +92,10 @@ class DesignSession:
                 info["model"] = cfg.model.split("/")[-1].split("\\")[-1]
                 devices = llama_server.list_devices()
                 info["device"] = devices[0] if devices else "CPU"
+                # Provenance, if the build step wrote it. Without this the UI
+                # cannot tell yesterday's weights from today's under the same
+                # file name -- which is exactly how a stale model gets trusted.
+                info["provenance"] = _model_provenance(cfg.model)
             else:
                 info["errors"].append(
                     "No model server reachable. Start one with: "
