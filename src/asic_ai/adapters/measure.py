@@ -26,7 +26,22 @@ Conventions used throughout this module:
     into a phase margin of 340 deg, which an RL policy will happily exploit.
   - A metric that is not defined for the data (no 0 dB crossing, no -180 deg
     crossing, no rising edge) returns None. It never returns 0.0, because 0.0
-    is a meaningful and usually terrible value for these metrics.
+    is a meaningful and usually terrible value for these metrics -- and, on a
+    BUDGET such as a supply current, a perfect one. supply_current_report()
+    honours that rule too: a supply branch carrying exactly 0 A is a supply
+    nothing conducts to, not a circuit that draws nothing.
+  - EVERY TOLERANCE IN THIS MODULE IS ANCHORED TO SOMETHING THE FAILURE MODE
+    CANNOT MOVE. A threshold derived from the quantity it is meant to validate
+    shrinks with the error it is meant to catch, and the two worst defects
+    found here were exactly that: a flat-band tolerance proportional to the
+    window span (so it vanished as the window was truncated by the end of the
+    array) and a settling tolerance proportional to the excursion of the record
+    (so it vanished as the record captured less of the step). The anchors used
+    instead are a caller-supplied floor (flat_band's span_dec and
+    min_samples), the fastest movement the waveform ever made
+    (settle_rate_ratio), the stimulus itself (drive_truncation_note) and an
+    exact zero. Each one is fixed before the data is seen, or measured on a
+    feature the defect cannot reach.
   - "Undefined" is signalled two ways, deliberately kept apart. A SCALAR METRIC
     that the data does not define is None. A per-sample GAIN whose magnitude is
     exactly zero is -inf (a real, ordered value that arithmetic can carry), and
@@ -87,6 +102,15 @@ DB3 = 10.0 * math.log10(2.0)
 DC_SLOPE_SPAN_DEC = 0.1
 DC_SLOPE_TOL_DB_PER_DEC = 0.25
 
+# flat_band's peak-to-peak test needs INTERIOR samples: with only the two
+# endpoints the "spread" of a window is the two-point difference, which is
+# exactly zero across a symmetric resonance. Three samples is the smallest
+# window that has an interior at all, and it recovers 3/4 of the curvature a
+# dense window would show (the worst case puts the peak midway between two
+# samples, so the observed spread is c*S^2/4 * (1 - 1/(k-1)^2)). It is also the
+# smallest count that does not make a `dec 10` sweep unmeasurable.
+FLAT_BAND_MIN_SAMPLES = 3
+
 # Below this the reference phase is too far from a multiple of 180 deg for an
 # inversion to be inferred at all, and no shift is applied. See
 # phase_inversion_shift.
@@ -131,6 +155,14 @@ RETURN_EDGE_RATE_FRAC = 0.1
 # counted twice, idd 2x, pessimistic). The optimistic error is the dangerous
 # one for a reward, so this stays well below the smallest genuine imbalance
 # either probe shows: R4's case A differs by 50 pct and case C by 75 pct.
+#
+# 5 pct IS tight for any ground-referenced load, and the two probes above are
+# the only evidence for it. It is kept deliberately, because the two outcomes
+# are not symmetric: a mismatch WIDER than this does not silently double the
+# answer, it sums both rails AND raises the "that is NOT the same current"
+# warning below, so the pessimistic case is always announced. There is no
+# corresponding announcement on the optimistic side -- an excluded rail is
+# simply gone -- so the threshold belongs on the side that talks.
 RAIL_RETURN_MATCH_FRAC = 0.05
 
 
@@ -574,26 +606,57 @@ def local_slope(freqs: Sequence[float], values: Sequence[float],
 
 def flat_band(freqs: Sequence[float], values: Sequence[float],
               span_dec: float = DC_SLOPE_SPAN_DEC,
-              tol_db_per_dec: float = DC_SLOPE_TOL_DB_PER_DEC
+              tol_db_per_dec: float = DC_SLOPE_TOL_DB_PER_DEC,
+              min_samples: int = FLAT_BAND_MIN_SAMPLES
               ) -> tuple[Optional[int], Optional[float]]:
     """(index, value) of the FLAT window with the HIGHEST value, or (None, None).
 
-    A "window" at sample i is the run of samples from i up to the first one at
-    least `span_dec` decades above it (or the end of the sweep). It is FLAT when
-    the PEAK-TO-PEAK spread of the whole run stays inside `tol_db_per_dec` times
-    the span the run actually covers -- the same certification the DC guard
-    makes, normalised the same way, so it cannot be faked by making the sweep
-    finer or coarser.
+    A "window" at sample i is the run of samples from i upward that covers AT
+    LEAST `span_dec` decades AND holds at least `min_samples` finite samples.
+    It is FLAT when the PEAK-TO-PEAK spread of the whole run stays inside
+    `tol_db_per_dec` times the span the run covers.
+
+    A WINDOW THAT CANNOT MEET BOTH CONDITIONS IS REFUSED, NOT EVALUATED. This
+    is the whole of the second defect and it is worth being explicit about,
+    because the first version of this function accepted a window truncated by
+    the end of the array:
+
+      - the peak-to-peak test needs INTERIOR samples. With only the two
+        endpoints the spread IS the two-point difference, and a two-point
+        difference across a resonance is zero by symmetry -- exactly the test
+        this function exists to replace.
+      - the peak-to-peak test needs SPAN. Near a stationary point the spread
+        over a window falls as span^2 while a tolerance proportional to the
+        span falls only as span, so the ratio goes to zero and ANY peak is
+        certified once the window is short enough.
+
+    Both failures were reachable at once, at the top of the sweep, where the
+    run is cut short by the end of the array. Measured on a real `.ac` of an
+    AC-coupled stage with 35.1 dB of mid-band gain and a Q = 2.2 pole pair at
+    1 MHz: at `dec 20 1k 1meg` the window at sample 59 spanned 0.05 decades and
+    held two samples, its spread was 5.8e-03 dB against a 1.25e-02 dB
+    tolerance, and 41.94 dB of resonant peak was certified as the passband --
+    a 35 dB amplifier passing a `min: 40 dB` spec, and the peakier the design
+    the higher the number. The answer depended on sweep density alone
+    (dec 10 -> 35.12, dec 20 -> 41.94, dec 50 and finer -> 35.13), and stopping
+    the sweep at the peak brought it back at any density (dec 2000 -> 42.17).
+
+    WHY THE FLOOR IS IMMUNE. `span_dec` and `min_samples` are arguments, fixed
+    by the caller before any data is seen. Nothing about the response, the
+    sweep density or where the sweep happens to stop can lower them, so the
+    tolerance `tol_db_per_dec * span` can no longer shrink below
+    `tol_db_per_dec * span_dec`. A window WIDER than the floor is allowed to
+    carry the wider tolerance because width helps the test rather than hurting
+    it: the curvature signal grows as span^2 and the tolerance only as span, so
+    the detection ratio improves monotonically with span. The failure mode
+    could only ever shrink a window, and shrinking is now a refusal.
 
     THE PEAK-TO-PEAK TEST IS THE POINT. A two-point slope over the same window
     is exactly zero on the flank of a resonance, because a window straddling
-    the peak has equal ENDPOINTS: an under-damped amplifier with 35 dB of
-    mid-band gain and a Q = 2.2 pole pair has a window at 0.82*f0 whose slope
-    is 0.000 dB/decade and whose gain is 41.1 dB, one dB under the resonant
-    peak. A slope test therefore certifies the resonance as the passband, which
-    is the whole defect. The spread over that window is a full dB and the
-    peak-to-peak test rejects it; the first window it accepts is the real
-    mid-band, at 35.04 dB.
+    the peak has equal ENDPOINTS. A slope test therefore certifies the
+    resonance as the passband, which is the original defect. The spread over
+    that window is far outside tolerance and the peak-to-peak test rejects it;
+    the first window it accepts is the real mid-band.
 
     Used by ac_metrics to find the passband of a response whose sweep does not
     reach DC. The highest-valued flat window is the passband because a passband
@@ -601,6 +664,7 @@ def flat_band(freqs: Sequence[float], values: Sequence[float],
     and any flatter-but-lower region is a stop band or a rolloff shelf.
     """
     n = min(len(freqs), len(values))
+    need = max(2, int(min_samples))
     best_i: Optional[int] = None
     best_v: Optional[float] = None
     for i in range(n):
@@ -612,6 +676,8 @@ def flat_band(freqs: Sequence[float], values: Sequence[float],
             continue                    # cannot win; skip the window scan
         lo = hi = v0
         j: Optional[int] = None
+        count = 1
+        wide_enough = False
         for k in range(i + 1, n):
             fk = float(freqs[k])
             vk = float(values[k])
@@ -620,9 +686,15 @@ def flat_band(freqs: Sequence[float], values: Sequence[float],
             lo = min(lo, vk)
             hi = max(hi, vk)
             j = k
-            if math.log10(fk / f0) >= span_dec:
+            count += 1
+            wide_enough = math.log10(fk / f0) >= span_dec
+            if wide_enough and count >= need:
                 break
-        if j is None:
+        # An incomplete window is NOT a flat window. Running off the end of the
+        # array with too few samples, too little span, or both, means the test
+        # was never made -- and "the test was never made" must not read as
+        # "the test passed".
+        if j is None or not wide_enough or count < need:
             continue
         span = math.log10(float(freqs[j]) / f0)
         if span <= 1e-12:
@@ -818,10 +890,30 @@ def ac_metrics(freqs: Sequence[float], gain_db: Sequence[float],
         # sample with no transfer function is already dropped upstream, so a
         # surviving 0 Hz sample with a finite magnitude is a real DC reading.
         at_dc = (f[0] == 0.0 and n > 0 and math.isfinite(float(g[0])))
-        expected = 0.0 if at_dc else bode_phase_estimate(slope)
 
-        if normalize_phase and expected is not None:
-            k = phase_inversion_shift(ph, ref_index=0, expected_deg=expected)
+        # THE REFERENCE SAMPLE MUST HAVE A PHASE. The 180 deg question and the
+        # 2*pi branch question are both asked at ONE sample, and sample 0 is
+        # not always a sample that exists: on an AC-coupled response H(0) = 0,
+        # so transfer_function reports (-inf, NaN) at f = 0, and
+        # int(round(NaN / 360.0)) is a ValueError rather than a metric. That
+        # killed the whole of ac_metrics -- and with it stb(), extract_specs
+        # and rl_env's spec check -- on a real `.ac lin 201 0 1e6` broken-loop
+        # testbench. Anchor to the first sample that HAS a phase; if the sweep
+        # has none, there is no phase question to ask and k stays 0.
+        ph_ref = next((i for i in range(len(ph)) if math.isfinite(ph[i])), None)
+        if at_dc:
+            expected: Optional[float] = 0.0
+        elif ph_ref is None:
+            expected = None
+        else:
+            # The Bode estimate must be taken WHERE THE REFERENCE IS. For the
+            # ordinary sweep ph_ref is 0 and this is exactly `slope`.
+            expected = bode_phase_estimate(
+                slope if ph_ref == 0 else local_slope(f, g, ph_ref)[0])
+
+        if normalize_phase and expected is not None and ph_ref is not None:
+            k = phase_inversion_shift(ph, ref_index=ph_ref,
+                                      expected_deg=expected)
             if k:
                 ph = [p - 180.0 * k for p in ph]
         elif normalize_phase:
@@ -829,7 +921,7 @@ def ac_metrics(freqs: Sequence[float], gain_db: Sequence[float],
             # an artefact of atan2's principal branch and never information.
             # Skipping the call entirely left it in, which is what made a plain
             # 3-pole amplifier's gain margin vanish.
-            k = 2 * int(round(ph[0] / 360.0)) if ph else 0
+            k = 2 * int(round(ph[ph_ref] / 360.0)) if ph_ref is not None else 0
             if k:
                 ph = [p - 180.0 * k for p in ph]
         out["phase_inversion_k"] = float(k)
@@ -842,9 +934,10 @@ def ac_metrics(freqs: Sequence[float], gain_db: Sequence[float],
                 where = ("the sample at 0 Hz, which IS the DC point, where a "
                          "non-inverting minimum-phase response shows 0 deg")
             elif expected is not None:
-                where = (f"f_start = {f[0]:g} Hz, where a minimum-phase "
-                         f"response with the measured {slope:.4g} dB/decade "
-                         f"slope would show {expected:.4g} deg")
+                f_ref = f[ph_ref] if ph_ref is not None else f[0]
+                where = (f"f = {f_ref:g} Hz, the lowest sample that has a "
+                         f"phase, where a minimum-phase response would show "
+                         f"{expected:.4g} deg")
             else:
                 where = (f"f_start = {f[0]:g} Hz; the 180 deg question was "
                          f"unanswerable from this data, so only the 2*pi "
@@ -864,8 +957,26 @@ def ac_metrics(freqs: Sequence[float], gain_db: Sequence[float],
 
     # -- does this sweep actually reach DC? ---------------------------------
     lead, resid0, resid1 = low_frequency_phase_lead(f, g, ph)
-    if f[0] <= 0.0:
+    if f[0] <= 0.0 and math.isfinite(g[0]):
         reaches_dc: Optional[bool] = True
+    elif f[0] <= 0.0:
+        # THE SAME GUARD THE INVERSION TEST MAKES, ON ITS TWIN. A sample AT
+        # 0 Hz is the DC point, but a 0 Hz sample with NO finite magnitude is
+        # not a DC gain of anything: transfer_function writes -inf there
+        # exactly when H(0) = 0, which is what an AC-coupling capacitor does.
+        # `if f[0] <= 0.0: reaches_dc = True` published that -inf as the DC
+        # gain and made it the passband reference. The 0 Hz sample answers the
+        # question -- it says the gain at DC is ZERO -- so this is a refusal
+        # with evidence, not an "I cannot tell".
+        reaches_dc = False
+        notes["dc_gain_db"] = (
+            "the sweep DOES include 0 Hz, and the response there has no "
+            "transfer function at all: |H(0)| = 0, which is -inf dB. That is "
+            "an AC-coupled response -- a series capacitor, a transformer, a "
+            "high-pass -- whose gain at DC really is zero. There is no finite "
+            "DC gain to report. The passband is taken from the flat region of "
+            "the swept band instead."
+        )
     elif slope is None:
         reaches_dc = None
     elif abs(slope) > DC_SLOPE_TOL_DB_PER_DEC:
@@ -910,14 +1021,18 @@ def ac_metrics(freqs: Sequence[float], gain_db: Sequence[float],
         )
     else:
         out["dc_gain_valid"] = 0.0
-        notes.setdefault("dc_gain_db", (
-            f"the sweep does not reach DC. At f_start = {f[0]:g} Hz the "
-            f"response still slopes {slope:.4g} dB/decade (tolerance "
-            f"{DC_SLOPE_TOL_DB_PER_DEC:g} dB/dec over {span:.3g} decades), so "
-            f"the {g[0]:.4g} dB measured there is a point on a rolloff, not a "
-            "DC gain. It is reported as low_freq_gain_db. Extend the sweep "
-            "downward to measure the DC gain."
-        ))
+        if "dc_gain_db" not in notes:
+            # Reached only via the slope test, which cannot fire unless `slope`
+            # and `span` are real numbers. The 0 Hz / |H| = 0 refusal above
+            # writes its own note and has no slope to quote.
+            notes["dc_gain_db"] = (
+                f"the sweep does not reach DC. At f_start = {f[0]:g} Hz the "
+                f"response still slopes {slope:.4g} dB/decade (tolerance "
+                f"{DC_SLOPE_TOL_DB_PER_DEC:g} dB/dec over {span:.3g} decades), "
+                f"so the {g[0]:.4g} dB measured there is a point on a rolloff, "
+                "not a DC gain. It is reported as low_freq_gain_db. Extend the "
+                "sweep downward to measure the DC gain."
+            )
 
     # -- passband reference for the -3 dB edges ------------------------------
     # passband_gain_db IS the number the reward reads as "the gain of this
@@ -1290,6 +1405,51 @@ PULSE_RETURN_FRAC = 0.4
 # overshoot worth reporting and far above a simulator's integration jitter.
 MONOTONE_TOL_FRAC = 1e-6
 
+# "HAS A LEVEL ACTUALLY FORMED HERE?", asked wherever one is inferred.
+#
+# The record is scanned with one window length, and the window at the END of
+# the measurement region is compared against the FASTEST window anywhere up to
+# it. Both are rates (volts per second), both use the same window length, so
+# sample density cancels and only the SHAPE of the waveform decides.
+#
+# WHY THE FASTEST WINDOW IS AN IMMUNE ANCHOR. It is measured ON THE EDGE, and
+# the edge is present by construction -- it is what makes the excursion
+# non-zero in the first place. The failure this guard exists to catch is a
+# record, or a drive pulse, that ends before the circuit finishes, and neither
+# of those can make the edge move more slowly: it is the same edge either way.
+# Contrast the peak-to-peak excursion OF THIS RECORD, which the same failure
+# shrinks by exactly the factor by which the answer is wrong.
+#
+# WHAT THE RATIO MEANS. For a first-order approach y = Y(1 - exp(-t/tau)) the
+# rate at time T is (Y/tau)exp(-T/tau) and the largest rate is Y/tau, so
+#
+#     rate_end / rate_max = exp(-T/tau) = the fraction of the step STILL TO
+#                                         COME, i.e. the relative error in y1.
+#
+# and for the same stage driven by a PULSE of width W < tau that is cut off
+# before it arrives, the output reaches Y*W/tau and then decays at
+# (Y*W/tau)/tau, so the same ratio reads W/tau -- the fraction of the step the
+# record CAPTURED. One test, one constant, both failure modes.
+#
+# WHERE THE LINE IS. 0.02 says y1 is within 2 pct of the level the circuit is
+# heading for, which for a first-order edge is 3.9 time constants of record and
+# costs the 10-90 rise time 7.4 pct at the very boundary. Measured on real
+# ngspice (RC, tau = 5 us, drive pulse widened one step at a time) the ratio
+# tracks exp(-W/tau) to within 10 pct all the way down:
+#     W/tau      0.4      2.0      5.0      6.0      8.0     10.0
+#     ratio    1.95e-1  1.37e-1  6.7e-3   2.69e-3  3.78e-4  5.3e-5
+# The two rows that must fall on opposite sides are 2.0 (a 10-90 rise time
+# 36 pct fast, and the drive form alone put it there) and 5.0, the width of
+# this repo's own canonical transient deck, whose 2.7 pct is the documented
+# IEEE 181 answer. 0.02 sits 6.8x under the first and 3.0x over the second.
+#
+# It cannot be pushed much tighter: a record whose top is formed to 0.05 pct is
+# INDISTINGUISHABLE, from the output alone, from one whose circuit is 2000x too
+# slow but whose drive was removed early -- both are flat to 0.05 pct at the
+# end. That case is settled by the DRIVE, not by the output, in
+# drive_truncation_note().
+SETTLE_RATE_FRAC = 0.02
+
 
 @dataclass
 class WaveformLevels:
@@ -1305,10 +1465,15 @@ class WaveformLevels:
               same), and the measurement region ends where the return edge
               starts, so nothing downstream measures across it.
       "unsettled"
-              the waveform went somewhere and was STILL GOING when the record
-              ended. There is no final level, so y1 is the last level reached
-              and nothing may be referred to it. Every metric that needs a
-              final level is refused.
+              the waveform went somewhere and was STILL GOING when the level it
+              would be referred to was taken. There is no final level, so y1 is
+              the last level reached and nothing may be referred to it. Every
+              metric that needs a final level is refused. This is asked at the
+              END OF THE MEASUREMENT REGION, wherever that is: the tail of a
+              step and the TOP OF A PULSE are both inferred levels and both are
+              tested. The guard used to be on the step branch alone, and a
+              drive pulse narrower than the stage it drives then moved the
+              answer by 7x with an empty notes dict.
       "flat"  no excursion at all; nothing is defined.
     """
 
@@ -1398,23 +1563,11 @@ def waveform_levels(y: Sequence[float], frac: float = 0.02,
         # one would be referred to a level the circuit never reached.
         k_tail = max(1, int(n * frac))
         drift = window_drift(vals[n - k_tail:])
-        if drift is not None and drift > tol * ptp:
+        note = _unsettled_note(vals, t, y0, y_tail, ptp, 0, n - 1, k_tail,
+                               drift, frac, tol, "record")
+        if note:
             lv.kind = "unsettled"
-            lv.note = (
-                f"the waveform is STILL MOVING at the end of the record. Over "
-                f"the last {100.0 * frac:g} pct of it the level drifts "
-                f"{drift:.6g}, which is {100.0 * drift / ptp:.4g} pct of the "
-                f"{ptp:.6g} peak-to-peak excursion (tolerance "
-                f"{100.0 * tol:g} pct). It never settled, so the "
-                f"{y_tail:.6g} at the end of the record is a point on the way "
-                f"somewhere and NOT a final level. Referring the 10/50/90 pct "
-                f"ladder to it measures a fraction of a level the circuit "
-                f"never reached: on an R = 1 Meg, C = 1 uF stage run for 1 ms "
-                f"that read a rise time of 792 us against a true 2.197 s. "
-                f"rise_time, fall_time, settling_time, slew_rate, "
-                f"overshoot_pct and the fractional times are refused. Extend "
-                f"tstop past a few time constants."
-            )
+            lv.note = note
         return lv
 
     # -- returning waveform: measure the first edge --------------------------
@@ -1424,11 +1577,32 @@ def waveform_levels(y: Sequence[float], frac: float = 0.02,
         lv.y1 = y0
         lv.kind = "flat"
         return lv
-    i_half = next(i for i in range(n) if dev[i] >= 0.5 * dmax)
+    # THE 50 PCT LEVEL MUST NOT BE REFERENCED TO THE OVERSHOOT PEAK. dmax is
+    # the largest excursion in the record, and on a ringing pulse that is the
+    # OVERSHOOT, not the top. Half of it then sits ABOVE the first ring trough,
+    # so the "first sample below 50 pct" lands in the trough instead of on the
+    # return edge, and the rate-bounded walk-back faithfully walks back up the
+    # trough to the ring peak and stops there. Second-order, zeta = 0.16, a
+    # 19 us plateau at 1.0 V and a 60.097 pct overshoot measured 0.076 pct,
+    # because the whole measurement region had collapsed to the first 1.5 us:
+    # the "top" it referred everything to WAS the overshoot peak.
+    #
+    # The reference is instead the MEDIAN of the excursions that reach at least
+    # half the largest one -- the level the waveform actually spends its time
+    # at, which is the definition of the top (IEEE 181 finds it by histogram
+    # for exactly this reason). Ringing is a brief transient by construction,
+    # so it cannot move a median; only a genuine plateau can. On the waveform
+    # above the median is 1.000 V against a 1.601 V peak, the 50 pct level
+    # drops from 0.80 to 0.50, the 0.639 V ring trough no longer crosses it,
+    # and the region runs to the real return edge at 19 us.
+    tops = sorted(v for v in dev if v >= 0.5 * dmax)
+    ref_dev = tops[len(tops) // 2] if tops else dmax
+    half_level = 0.5 * ref_dev
+    i_half = next(i for i in range(n) if dev[i] >= half_level)
     d = 1.0 if vals[i_half] > y0 else -1.0
     i_ret = n
     for i in range(i_half + 1, n):
-        if math.isfinite(vals[i]) and d * (vals[i] - y0) < 0.5 * dmax:
+        if math.isfinite(vals[i]) and d * (vals[i] - y0) < half_level:
             i_ret = i
             break
     j = min(i_ret - 1, n - 1)
@@ -1465,6 +1639,37 @@ def waveform_levels(y: Sequence[float], frac: float = 0.02,
     lv.i_edge = i_half
     lv.i_end = i_end
     lv.monotone = _is_monotone(vals, 0, i_end, lv.y1 - y0, ptp)
+
+    # THE SAME QUESTION THE STEP BRANCH ASKS, ON THE BRANCH THAT ANSWERS IT FOR
+    # EVERY INVERTER, BUFFER AND RING OSCILLATOR IN THE EVAL SET. The TOP of a
+    # pulse is a final level exactly as much as the tail of a step is, and it
+    # is inferred the same way -- by averaging the end of a region -- so it
+    # needs the same proof that the level ever formed. Without it a drive pulse
+    # shorter than the stage it drives simply moves the answer: an RC with
+    # tau = 5 us and a true 10-90 rise time of 10.99 us read 1.59 us at a 2 us
+    # drive width and 7.06 us at 10 us, both with an empty notes dict, and the
+    # stage passed a `max: 5 us` budget by 3x on nothing but the stimulus.
+    ratio, r_end, r_max = settle_rate_ratio(vals, t, i_end,
+                                            max(2, int(
+                                                (i_end - i_half + 1) * frac)))
+    if ratio is not None and ratio > SETTLE_RATE_FRAC:
+        lv.kind = "unsettled"
+        lv.note = (
+            f"the TOP OF THE PULSE NEVER FORMED. At the end of the first "
+            f"plateau (sample {i_end} of {n}) the waveform is still moving at "
+            f"{r_end:.6g} per second, which is {ratio:.4g} of the "
+            f"{r_max:.6g} per second it reached on the edge (tolerance "
+            f"{SETTLE_RATE_FRAC:g}). That ratio IS the fraction of the step "
+            f"still to come, so the {lv.y1:.6g} averaged there is a point on "
+            f"the way up and NOT the top: the drive pulse ended before the "
+            f"circuit did. Referring the 10/50/90 pct ladder to it reports a "
+            f"rise time set by the STIMULUS -- an RC with a true 10-90 rise "
+            f"of 10.99 us read 1.59 us on a 2 us drive pulse. rise_time, "
+            f"fall_time, settling_time, slew_rate, overshoot_pct and the "
+            f"fractional times are refused. Widen the drive pulse past a few "
+            f"time constants of the stage."
+        )
+        return lv
     lv.note = (
         "the waveform RETURNS to its starting level, so it is a pulse or a "
         "periodic drive, not a step. Every level is taken from the FIRST edge: "
@@ -1476,6 +1681,112 @@ def waveform_levels(y: Sequence[float], frac: float = 0.02,
         "excursion of the starting level, which is what gives a pulse away."
     )
     return lv
+
+
+def _unsettled_note(vals: Sequence[float], t: Optional[Sequence[float]],
+                    y0: float, y_end: float, ptp: float, i0: int, i_end: int,
+                    k: int, drift: Optional[float], frac: float, tol: float,
+                    where: str) -> str:
+    """"" when a final level has formed at i_end, else why it has not.
+
+    TWO tests, and a record must pass BOTH. They fail on different things and
+    neither subsumes the other:
+
+      1. THE RATE TEST (settle_rate_ratio). Anchored to the fastest movement in
+         the record, which the failure mode cannot slow down. This is the test
+         that survives a record capturing a thousandth of the step.
+      2. THE DRIFT TEST, kept from R7: the movement across the last `frac` of
+         the region against `tol` of the peak-to-peak excursion. Its anchor is
+         NOT immune -- that is F2 -- but it catches a shape the rate test
+         cannot: a record with one fast transient early and a slow, steady
+         drift at the end, where the transient makes rate_max large enough to
+         hide the drift.
+    """
+    ratio, r_end, r_max = settle_rate_ratio(vals, t, i_end, k)
+    if ratio is not None and ratio > SETTLE_RATE_FRAC:
+        return (
+            f"the waveform is STILL MOVING at the end of the {where}. It is "
+            f"changing at {r_end:.6g} per second there, which is "
+            f"{ratio:.4g} of the {r_max:.6g} per second it reached on its own "
+            f"edge (tolerance {SETTLE_RATE_FRAC:g}). For any first-order "
+            f"approach that ratio IS the fraction of the step still to come, "
+            f"so the {y_end:.6g} at the end of the {where} is a point on the "
+            f"way somewhere and NOT a final level. Referring the 10/50/90 pct "
+            f"ladder to it measures a fraction of a level the circuit never "
+            f"reached: on an R = 1 Meg, C = 1 uF stage run for 1 ms that read "
+            f"a rise time of 792 us against a true 2.197 s. rise_time, "
+            f"fall_time, settling_time, slew_rate, overshoot_pct and the "
+            f"fractional times are refused. Extend tstop past a few time "
+            f"constants."
+        )
+    if drift is not None and ptp > 0.0 and drift > tol * ptp:
+        return (
+            f"the waveform is STILL MOVING at the end of the {where}. Over "
+            f"the last {100.0 * frac:g} pct of it the level drifts "
+            f"{drift:.6g}, which is {100.0 * drift / ptp:.4g} pct of the "
+            f"{ptp:.6g} peak-to-peak excursion (tolerance "
+            f"{100.0 * tol:g} pct). It never settled, so the "
+            f"{y_end:.6g} at the end of the {where} is a point on the way "
+            f"somewhere and NOT a final level. Referring the 10/50/90 pct "
+            f"ladder to it measures a fraction of a level the circuit "
+            f"never reached: on an R = 1 Meg, C = 1 uF stage run for 1 ms "
+            f"that read a rise time of 792 us against a true 2.197 s. "
+            f"rise_time, fall_time, settling_time, slew_rate, "
+            f"overshoot_pct and the fractional times are refused. Extend "
+            f"tstop past a few time constants."
+        )
+    return ""
+
+
+def settle_rate_ratio(vals: Sequence[float], t: Optional[Sequence[float]],
+                      i_end: int, k: int
+                      ) -> tuple[Optional[float], Optional[float],
+                                 Optional[float]]:
+    """(rate_end / rate_max, rate_end, rate_max) over windows of `k` samples.
+
+    The rate of a window is |mean(second half) - mean(first half)| divided by
+    the time between the two half-centroids, so zero-mean noise cancels exactly
+    the way window_drift() intends and a non-uniform `.tran` time axis is
+    handled honestly. `rate_max` is the largest such rate over every window
+    ending at or before `i_end`; `rate_end` is the window that ends AT i_end.
+
+    Returns (None, ...) when the region is too short to hold two windows -- a
+    region that cannot support the test must not be told that it passed it.
+    See SETTLE_RATE_FRAC for what the ratio means and why rate_max is an anchor
+    the failure mode cannot move.
+    """
+    n = len(vals)
+    if k < 2 or i_end < 0 or i_end >= n or i_end + 1 < 2 * k:
+        return None, None, None
+    half = k // 2
+    # Prefix sums make the whole scan O(n) instead of O(n*k).
+    ps = [0.0] * (n + 1)
+    pt = [0.0] * (n + 1)
+    for i in range(n):
+        v = float(vals[i])
+        ps[i + 1] = ps[i] + (v if math.isfinite(v) else 0.0)
+        tv = float(t[i]) if (t is not None and i < len(t)) else float(i)
+        pt[i + 1] = pt[i] + (tv if math.isfinite(tv) else float(i))
+
+    def rate(s: int) -> Optional[float]:
+        a = (ps[s + half] - ps[s]) / half
+        b = (ps[s + k] - ps[s + half]) / (k - half)
+        ta = (pt[s + half] - pt[s]) / half
+        tb = (pt[s + k] - pt[s + half]) / (k - half)
+        dt = tb - ta
+        if not (dt > 0.0) or not math.isfinite(a) or not math.isfinite(b):
+            return None
+        return abs(b - a) / dt
+
+    r_end = rate(i_end - k + 1)
+    r_max: Optional[float] = None
+    for s in range(0, i_end - k + 2):
+        r = rate(s)
+        if r is not None and (r_max is None or r > r_max):
+            r_max = r
+    if r_end is None or r_max is None or not (r_max > 0.0):
+        return None, r_end, r_max
+    return r_end / r_max, r_end, r_max
 
 
 def _is_monotone(y: Sequence[float], i0: int, i1: int, direction: float,
@@ -1639,7 +1950,12 @@ def settling_time(t: Sequence[float], y: Sequence[float],
 
 
 def slew_rate(t: Sequence[float], y: Sequence[float]) -> Optional[float]:
-    """10-90 chord slew rate in volts per second (units per second)."""
+    """10-90 chord slew rate of the FIRST edge, signed by its direction.
+
+    This is what the record's first edge did. It is NOT what the design
+    guarantees, because WHICH edge is first is chosen by the testbench: see
+    edge_slew_rates() and slew_rate_worst(), which is what a spec is scored on.
+    """
     lv = waveform_levels(y, t=t)
     if lv.kind == "unsettled":
         return None
@@ -1652,6 +1968,114 @@ def slew_rate(t: Sequence[float], y: Sequence[float]) -> Optional[float]:
     return 0.8 * abs(lv.y1 - lv.y0) / tr * (1.0 if lv.y1 > lv.y0 else -1.0)
 
 
+def _crossings_in_segment(ta: float, ya: float, tb: float, yb: float,
+                          level: float) -> list[tuple[float, float]]:
+    """[(time, +1 up / -1 down)] where one segment crosses `level`."""
+    if not (math.isfinite(ya) and math.isfinite(yb)):
+        return []
+    if ya < level <= yb:
+        d = 1.0
+    elif ya > level >= yb:
+        d = -1.0
+    else:
+        return []
+    if yb == ya:
+        return [(tb, d)]
+    return [(ta + (tb - ta) * (level - ya) / (yb - ya), d)]
+
+
+def edge_slew_rates(t: Sequence[float], y: Sequence[float],
+                    lo: float = 0.1, hi: float = 0.9
+                    ) -> list[tuple[float, float, float]]:
+    """Every COMPLETE 10-90 traversal in the record, in time order.
+
+    Each entry is (start time, signed chord rate, direction). The levels are
+    the base and top waveform_levels() identified, so a rising traversal and a
+    falling one are measured against the same two levels and are directly
+    comparable.
+
+    WHY EVERY EDGE. measure.slew_rate() measures the FIRST edge, and which edge
+    is first is a property of the testbench, not of the design. Real ngspice,
+    one deck with a 40 us rise and a 4 us fall, the SAME source, only the
+    `.tran` start moved:
+
+        .tran 100n 160u 0      opens on the rise:  0.045 V/us
+        .tran 100n 260u 95u    opens on the fall:  0.450 V/us
+
+    a 10x swing in the score for the same circuit, with nothing in
+    `unmeasurable` and no note. abs() removes the SIGN dependence of that
+    number but not the EDGE dependence, so it converted a deterministic
+    false-FAIL into a stimulus-dependent false-PASS, which is worse. Both
+    records above contain BOTH edges, so scanning all of them and taking the
+    slowest gives 0.045 V/us either way.
+
+    A traversal counts only when it is complete: the waveform crossed the 10
+    pct level and then the 90 pct level (or the reverse) without falling back
+    across the level it came from. A record that opens part-way down an edge
+    contributes nothing, which is right -- half an edge has no 10-90 time.
+    """
+    n = min(len(t), len(y))
+    if n < 2:
+        return []
+    lv = waveform_levels(y[:n], t=t[:n])
+    if lv.kind in ("flat", "unsettled"):
+        return []
+    base = min(lv.y0, lv.y1)
+    top = max(lv.y0, lv.y1)
+    span = top - base
+    if not (span > 0.0):
+        return []
+    lo_level = base + lo * span
+    hi_level = base + hi * span
+    if not (hi_level > lo_level):
+        return []
+    out: list[tuple[float, float, float]] = []
+    pending_rise: Optional[float] = None
+    pending_fall: Optional[float] = None
+    chord = (hi - lo) * span
+    for i in range(n - 1):
+        ta, tb = float(t[i]), float(t[i + 1])
+        ya, yb = float(y[i]), float(y[i + 1])
+        events = ([(tm, d, "lo") for tm, d in
+                   _crossings_in_segment(ta, ya, tb, yb, lo_level)]
+                  + [(tm, d, "hi") for tm, d in
+                     _crossings_in_segment(ta, ya, tb, yb, hi_level)])
+        for tm, d, which in sorted(events, key=lambda e: e[0]):
+            if which == "lo" and d > 0:
+                pending_rise = tm
+            elif which == "hi" and d > 0:
+                if pending_rise is not None and tm > pending_rise:
+                    out.append((pending_rise, chord / (tm - pending_rise), 1.0))
+                pending_rise = None
+                pending_fall = None
+            elif which == "hi" and d < 0:
+                pending_fall = tm
+            elif which == "lo" and d < 0:
+                if pending_fall is not None and tm > pending_fall:
+                    out.append((pending_fall, -chord / (tm - pending_fall),
+                                -1.0))
+                pending_fall = None
+                pending_rise = None
+    return out
+
+
+def slew_rate_worst(t: Sequence[float], y: Sequence[float]
+                    ) -> tuple[Optional[float], int]:
+    """(magnitude of the SLOWEST complete edge, how many edges were found).
+
+    THE NUMBER A SPEC IS SCORED ON. A slew-rate spec is a `min:`, so the
+    slowest edge is the one the design has to meet, and it is the same number
+    whichever edge the record happens to open on -- which is the whole point.
+    Falls back to the first edge's magnitude, with a count of 0, when no
+    complete 10-90 traversal is in the record.
+    """
+    edges = edge_slew_rates(t, y)
+    if not edges:
+        sr = slew_rate(t, y)
+        return (abs(sr) if sr is not None else None), 0
+    return min(abs(e[1]) for e in edges), len(edges)
+
+
 def prop_delay(t: Sequence[float], y_in: Sequence[float],
                y_out: Sequence[float]) -> Optional[float]:
     """50 pct to 50 pct propagation delay between two waveforms on one time axis."""
@@ -1662,7 +2086,74 @@ def prop_delay(t: Sequence[float], y_in: Sequence[float],
     return to - ti
 
 
-def tran_metrics(t: Sequence[float], y: Sequence[float]) -> dict[str, Any]:
+def drive_truncation_note(t: Sequence[float], y: Sequence[float],
+                          y_in: Sequence[float], frac: float = 0.02) -> str:
+    """"" when the drive held long enough, else why the response is truncated.
+
+    THE ONE THING THE OUTPUT ALONE CANNOT SAY. waveform_levels() asks whether a
+    level formed at the end of the measurement region, and that question is
+    answerable from `y` by itself -- but only when the region ENDS where the
+    drive stops driving. On a stage far slower than its own drive pulse the
+    output never gets far enough to come back inside the record, so the pulse
+    detector sees no return, calls the record a STEP, and the region runs to
+    the end of the record -- where the output is beautifully flat, because the
+    drive went away and left it there.
+
+    Real ngspice, R = 1 Meg / C = 1 uF (tau = 1 s), .tran 1u 1m, the SAME
+    circuit under two drive forms:
+
+        PWL step drive : unsettled, rise refused                    (correct)
+        PULSE drive    : "step", rise 399.79 us, settling 490.05 us,
+                         notes {} -- both inside a `max: 1 ms` budget on a
+                         circuit 1000x too slow
+
+    and the output of the second is genuinely flat to 0.05 pct over the last
+    half of the record, better formed than this repo's own canonical 5-tau
+    pulse. No settling test on `y` can separate them, and one that could would
+    have to refuse the canonical deck too.
+
+    The DRIVE separates them, and the drive is an immune anchor: it is the
+    stimulus the testbench applied, fixed before the circuit responded, and
+    nothing the circuit does can move it. So the question is asked where the
+    drive says it should be -- at the last sample of the drive's own first
+    plateau -- and the output must have settled BY THEN. The 1 ms record above
+    reads a ratio of ~1 there (the output is climbing at full speed when the
+    drive is removed) and is refused under either drive form.
+
+    Returns "" when there is no drive, when the drive does not return inside
+    the record (a step drive: the output's own guard covers that), or when the
+    output had settled by the time the drive let go.
+    """
+    n = min(len(t), len(y), len(y_in))
+    if n < 4:
+        return ""
+    lv_in = waveform_levels(y_in[:n], frac=frac, t=t[:n])
+    if lv_in.kind != "pulse":
+        return ""
+    i_ret = min(lv_in.i_end, n - 1)
+    k = max(2, int((i_ret + 1) * frac))
+    ratio, r_end, r_max = settle_rate_ratio(y[:n], t[:n], i_ret, k)
+    if ratio is None or ratio <= SETTLE_RATE_FRAC:
+        return ""
+    return (
+        f"the DRIVE WAS REMOVED BEFORE THE CIRCUIT FINISHED. The stimulus is a "
+        f"pulse whose first plateau ends at t = {float(t[i_ret]):.6g} s, and "
+        f"at that moment the output is still moving at {r_end:.6g} per second "
+        f"-- {ratio:.4g} of the {r_max:.6g} per second it reached on its own "
+        f"edge (tolerance {SETTLE_RATE_FRAC:g}). Everything after that instant "
+        f"is the output sitting where the drive abandoned it, so the flat tail "
+        f"of this record is NOT a settled response and the level it holds is "
+        f"whatever fraction of the step the pulse width happened to buy. On an "
+        f"R = 1 Meg, C = 1 uF stage driven by a 500 us pulse that read a rise "
+        f"time of 399.79 us against a true 2.197 s. rise_time, fall_time, "
+        f"settling_time, slew_rate, overshoot_pct and the fractional times are "
+        f"refused. Widen the drive pulse past a few time constants of the "
+        f"stage."
+    )
+
+
+def tran_metrics(t: Sequence[float], y: Sequence[float],
+                 y_in: Optional[Sequence[float]] = None) -> dict[str, Any]:
     """All single-waveform transient metrics at once.
 
     "notes" carries the reason for anything the data does not define, and the
@@ -1670,12 +2161,35 @@ def tran_metrics(t: Sequence[float], y: Sequence[float]) -> dict[str, Any]:
     does. y_initial/y_final are the BASE and TOP of the first edge; on a pulse
     y_final is the plateau of that edge, NOT the level at the end of the
     simulation, and notes["levels"] says so.
+
+    `y_in` is the STIMULUS on the same time axis, when the caller has one. It
+    is the only input that can tell a settled response from a response the
+    drive abandoned; see drive_truncation_note().
     """
     lv = waveform_levels(y, t=t)
     st = settling_time(t, y)
     notes: dict[str, str] = {}
     if lv.note:
         notes["levels"] = lv.note
+    truncated = ""
+    if lv.kind != "unsettled" and y_in is not None:
+        truncated = drive_truncation_note(t, y, y_in)
+    if truncated:
+        notes["levels"] = truncated
+        for refused in ("rise_time", "fall_time", "overshoot_pct",
+                        "settling_time", "slew_rate", "t_50pct", "t_63pct",
+                        "y_final"):
+            notes[refused] = "refused: " + truncated
+        return {
+            "y_initial": lv.y0,
+            "y_final": lv.y1,
+            "waveform_kind": "unsettled",
+            "rise_time": None, "fall_time": None, "overshoot_pct": None,
+            "settling_time": None, "slew_rate": None,
+            "slew_rate_worst": None, "slew_edges": 0,
+            "t_50pct": None, "t_63pct": None,
+            "notes": notes,
+        }
     if lv.kind == "unsettled":
         # Nothing here has a final level to be referred to. y_final is the last
         # level the record REACHED and is labelled as such, so a consumer that
@@ -1691,6 +2205,33 @@ def tran_metrics(t: Sequence[float], y: Sequence[float]) -> dict[str, Any]:
             + ("first pulse" if lv.kind == "pulse" else "simulated window")
             + ", so it never settles inside it; extend tstop"
         )
+    sr = slew_rate(t, y)
+    worst, n_edges = slew_rate_worst(t, y)
+    if sr is not None:
+        # ALWAYS name the edge, not only when the value is missing. "Which
+        # edge" is the one degree of freedom the testbench controls, and a
+        # signed number does not say how many other edges the record held.
+        if n_edges:
+            notes["slew_rate"] = (
+                f"slew_rate is the FIRST edge of this record "
+                f"({'rising' if sr > 0 else 'falling'}, "
+                f"{abs(sr):.6g} per second), and which edge is first is set by "
+                f"the testbench, not by the design: the same deck read 10x "
+                f"faster with nothing changed but the `.tran` start. "
+                f"{n_edges} complete 10-90 edge(s) are in this record and the "
+                f"slowest of them runs at {worst:.6g} per second; that is "
+                f"slew_rate_worst, and it is what a spec is scored on."
+            )
+        else:
+            notes["slew_rate"] = (
+                f"slew_rate is the FIRST edge of this record "
+                f"({'rising' if sr > 0 else 'falling'}), and which edge is "
+                f"first is set by the testbench, not by the design. NO "
+                f"complete 10-90 traversal is in the record -- it opens or "
+                f"ends part-way down an edge -- so there is no second edge to "
+                f"compare against and slew_rate_worst is this same edge. "
+                f"Capture at least one full edge of each polarity."
+            )
     return {
         "y_initial": lv.y0,
         "y_final": lv.y1,
@@ -1699,7 +2240,9 @@ def tran_metrics(t: Sequence[float], y: Sequence[float]) -> dict[str, Any]:
         "fall_time": fall_time(t, y),
         "overshoot_pct": overshoot_pct(y, t),
         "settling_time": st,
-        "slew_rate": slew_rate(t, y),
+        "slew_rate": sr,
+        "slew_rate_worst": worst,
+        "slew_edges": n_edges,
         "t_50pct": time_to_fraction(t, y, 0.5),
         "t_63pct": time_to_fraction(t, y, 0.6321205588285577),
         "notes": notes,
@@ -1964,6 +2507,57 @@ def _spice_float(tok: Optional[str]) -> float:
     return mantissa
 
 
+def _publish_total(rep: "SupplyCurrentReport", branches: dict[str, float],
+                   chosen: Sequence[str]) -> None:
+    """Set rep.value from `chosen`, unless the total is EXACTLY zero.
+
+    0.0 IS NOT A MEASUREMENT OF A SUPPLY CURRENT, AND ON A CURRENT BUDGET IT IS
+    A PERFECT SCORE. This module opens with "It never returns 0.0, because 0.0
+    is a meaningful and usually terrible value for these metrics", and the
+    supply path was the one place that still did. A voltage source whose branch
+    current is exactly 0.000000 is not a supply drawing nothing; it is a source
+    that nothing conducts to at DC. Real ngspice, a 1.8 V rail that reaches the
+    circuit only through a series capacitor -- a mis-wired supply, an open at
+    DC -- reported
+
+        op_points {vdd#branch: 0.0, out: 0.0, vdd: 1.8}
+        idd 0.0, sources [vdd], warnings []      ->  `idd <= 0.2 mA` PASSES
+
+    on both the netlist path and the explicit-`sources` path. Disconnect the
+    supply and the current budget is met perfectly, which is the strongest
+    false gradient in this file.
+
+    EXACTLY zero is the right test and it needs no tolerance: a real branch
+    carrying real current lands on 1e-15, never on 0.0, and a floating-point
+    sum of magnitudes is 0.0 only when every term is.
+    """
+    total = sum(abs(branches[nm]) for nm in chosen)
+    zeros = sorted(nm for nm in chosen if branches[nm] == 0.0)
+    if total == 0.0:
+        rep.value = None
+        rep.warnings.append(
+            "every identified supply branch (" + ", ".join(sorted(chosen)) +
+            ") carries EXACTLY 0 A, so the total is 0.0. That is not a "
+            "measurement of a supply current: a source with exactly no branch "
+            "current is one that nothing conducts to at DC -- an unconnected "
+            "rail, a rail reaching the circuit only through a series "
+            "capacitor, or a block biased by a current source whose branch "
+            "SPICE does not write. On a current budget 0.0 would be a PERFECT "
+            "score, so it is refused. Check that the supply reaches the "
+            "circuit through a DC path, or name the real supplies via "
+            "`sources`"
+        )
+        return
+    if zeros:
+        rep.warnings.append(
+            "branch(es) " + ", ".join(zeros) + " carry EXACTLY 0 A and "
+            "contribute nothing to the total. A source with no branch current "
+            "at all is not a supply of this circuit; it is unconnected at DC. "
+            "The total below is the current of the remaining branch(es) only"
+        )
+    rep.value = total
+
+
 def supply_current_report(op_points: dict[str, float],
                           sources: Optional[Sequence[str]] = None,
                           netlist: Optional[str] = None) -> SupplyCurrentReport:
@@ -2020,7 +2614,7 @@ def supply_current_report(op_points: dict[str, float],
             )
             return rep
         rep.sources = sorted(chosen)
-        rep.value = sum(abs(branches[nm]) for nm in chosen)
+        _publish_total(rep, branches, chosen)
         return rep
 
     # -- no explicit list: classify what is there -----------------------------
@@ -2034,8 +2628,8 @@ def supply_current_report(op_points: dict[str, float],
                 "voltage source, so SPICE cannot be reporting a supply rail here"
             )
 
-    if netlist:
-        deck = parse_deck_sources(netlist)
+    deck = parse_deck_sources(netlist) if netlist else None
+    if netlist and deck is not None:
         isources = deck.isources
         for nm in list(candidates):
             if source_dc_value(nm, deck) == 0.0:
@@ -2135,31 +2729,56 @@ def supply_current_report(op_points: dict[str, float],
     # a branch of its own. The two shapes that DOUBLE the answer look nothing
     # like that: a supply ammeter in series with the rail carries the FULL rail
     # current, and the two halves of a dual supply carry the same current in
-    # opposite directions. Both make the sum exactly 2x, and neither can be
-    # told from two genuine rails WITHOUT THE DECK, so both are named here --
-    # and only here. With a deck in hand the ammeter has already been excluded
-    # by its DC 0 and the dual supply by the polarity-plus-magnitude test
-    # above, so raising this on a deck that declares a 1.8 V rail and a 3.3 V
-    # rail that happen to draw the same current says nothing true and ends by
-    # advising the caller to pass the netlist they already passed.
+    # opposite directions. Both make the sum exactly 2x.
+    #
+    # THE SUPPRESSION HAS TO PROVE THE TWIN COVERED IT. This warning was made
+    # conditional on `not netlist`, justified by "with a deck in hand the
+    # ammeter has already been excluded by its DC 0 and the dual supply by the
+    # polarity-plus-magnitude test above". Both of those tests classify by
+    # source_dc_value(...) == 0.0 / > 0.0 / < 0.0, and a NaN is none of the
+    # three: a rail written `Vdd vdd 0 DC {vsup}` parses to NaN -- which
+    # parse_deck_sources' own docstring calls the correct reading -- so
+    # neither test fires and the deck resolves NOTHING. Real ngspice,
+    # +/-1.8 V across 3.6 k, one 1.000 mA current:
+    #
+    #     literal DC values : 0.001 A, vss excluded, no warning     correct
+    #     {vsup} parameters : 0.002 A, only "2 branches were summed"     2x
+    #     no netlist at all : 0.002 A, plus this warning
+    #
+    # so passing the netlist made the diagnosis strictly WORSE than not
+    # passing it. The condition is therefore not "was a deck supplied" but
+    # "did the deck actually read every candidate", which is the thing the
+    # suppression assumed.
+    unreadable = sorted(nm for nm in candidates
+                        if deck is not None
+                        and not math.isfinite(source_dc_value(nm, deck)))
     twins = sorted(
         nm for nm in candidates
         if biggest > 0.0 and nm != max(candidates, key=lambda x: abs(branches[x]))
         and abs(abs(branches[nm]) - biggest) <= 1e-3 * biggest
     )
-    if twins and not netlist:
+    if twins and (not netlist or unreadable):
+        why = (
+            "Pass `netlist` so the polarities and the 0 V sense sources can be "
+            "read, or name the supplies via `sources`" if not netlist else
+            "The netlist WAS read, but the DC value of " +
+            ", ".join(unreadable) + " could not be: a source written with a "
+            "'{param}' expression, or with no DC value at all, has no readable "
+            "polarity, so neither the 0 V sense-source test nor the dual-rail "
+            "polarity test above can classify it and the deck resolves nothing "
+            "here. Write literal DC values on the rails, or name the supplies "
+            "via `sources`"
+        )
         rep.warnings.append(
             "branch(es) " + ", ".join(twins) + " carry the same current as the "
             "largest branch to within 0.1 pct. That is the shape of a supply "
             "AMMETER in series with the rail, or of the two halves of a dual "
             "supply -- in both cases it is ONE current and summing it twice "
-            "reports exactly 2x the real supply current. Pass `netlist` so the "
-            "polarities and the 0 V sense sources can be read, or name the "
-            "supplies via `sources`"
+            "reports exactly 2x the real supply current. " + why
         )
 
     rep.sources = sorted(candidates)
-    rep.value = sum(abs(branches[nm]) for nm in candidates)
+    _publish_total(rep, branches, candidates)
     return rep
 
 

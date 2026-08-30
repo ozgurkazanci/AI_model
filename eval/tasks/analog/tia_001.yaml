@@ -23,7 +23,7 @@ specs:
     # spectrum[0] is a function of where the sweep was started, not of the
     # circuit), and a spec that can never be measured is a silent -1.0 on this
     # task. 100 kHz is inside the TIA's flat band and above its 1/f corner.
-    at_freq: 100.0e3
+    at_freq: 100.0e+3
   idd:
     max: 2
     weight: 1.0

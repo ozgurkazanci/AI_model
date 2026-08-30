@@ -1431,7 +1431,8 @@ class NgspiceSharedAdapter(SimulatorAdapter):
         return measure.ac_metrics(freqs, mag.y_values, phase)
 
     @staticmethod
-    def measure_tran(result: TranResult, signal: str = "out") -> dict[str, Any]:
+    def measure_tran(result: TranResult, signal: str = "out",
+                     input_signal: Optional[str] = None) -> dict[str, Any]:
         """rise_time / fall_time / overshoot / settling_time / slew_rate.
 
         The signal's own x_values are the time axis whenever they are present
@@ -1439,6 +1440,11 @@ class NgspiceSharedAdapter(SimulatorAdapter):
         drops the samples where a signal is non-finite and gives that signal
         its own axis, and pairing a shortened y with the full global time
         vector shifts every sample against its time.
+
+        The STIMULUS is passed through whenever the result carries one on the
+        same axis. It is the only vector that can say a flat tail is the drive
+        having been removed rather than the circuit having settled; see
+        measure.drive_truncation_note().
         """
         sig = result.signals.get(signal)
         if sig is None:
@@ -1448,7 +1454,15 @@ class NgspiceSharedAdapter(SimulatorAdapter):
         t = list(result.time)
         if sig.x_values and len(sig.x_values) == len(sig.y_values):
             t = list(sig.x_values)
-        return measure.tran_metrics(t, sig.y_values)
+        y_in = None
+        for cand in (input_signal, "in", "vin", "input", "in_p"):
+            drive = result.signals.get(cand) if cand else None
+            if (drive is not None and cand != signal
+                    and len(drive.y_values) == len(t)
+                    and (not drive.x_values or list(drive.x_values) == t)):
+                y_in = list(drive.y_values)
+                break
+        return measure.tran_metrics(t, sig.y_values, y_in)
 
     def measure_idd(self, result: DCResult,
                     sources: Optional[Iterable[str]] = None,

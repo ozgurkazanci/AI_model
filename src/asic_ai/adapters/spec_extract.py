@@ -541,32 +541,50 @@ def _compute_metrics(dc: Any, ac: Any, tran: Any, noise: Any, stb: Any,
             sig_t, y = _signal_xy(signals[key])
             if len(sig_t) == len(y) and sig_t:
                 t = sig_t
-            tm = measure.tran_metrics(t, y)
+            # The STIMULUS is picked before the metrics are taken, not after:
+            # it is what tells a settled response from one the drive abandoned
+            # (measure.drive_truncation_note). _pick_input, NOT _pick_output --
+            # the latter falls back to another OUTPUT.
+            in_key = _pick_input(signals, input_signal)
+            t_in: list[float] = []
+            y_in: list[float] = []
+            if in_key is not None and in_key != key:
+                t_in, y_in = _signal_xy(signals[in_key])
+            same_axis = bool(y_in) and len(y_in) == len(t) and t_in == t
+            tm = measure.tran_metrics(t, y, y_in if same_axis else None)
             # tran_metrics explains every None it returns -- a record that
             # never settled refuses the whole 10/50/90 ladder. Carry the
             # explanation across instead of "not produced by the supplied
             # results", which reads as a missing analysis.
             for metric, note in (tm.get("notes") or {}).items():
-                if metric in ("rise_time", "fall_time", "settling_time",
-                              "slew_rate", "overshoot_pct", "prop_delay"):
+                if (metric in ("rise_time", "fall_time", "settling_time",
+                               "slew_rate", "overshoot_pct", "prop_delay")
+                        and tm.get(metric) is None):
                     why[metric] = note
             put("rise_time", tm.get("rise_time"))
             put("fall_time", tm.get("fall_time"))
             put("settling_time", tm.get("settling_time"))
-            # WHICH EDGE the first one is belongs to the testbench, not to
-            # the design: measure.slew_rate signs its answer so a caller can
-            # see which edge it measured, and passing that sign into the spec
-            # made eval/tasks/analog/class_ab_output_001.yaml's
-            # `slew_rate: {min: 100.0}` fail at -1.0 for every design whose
-            # stimulus happens to fall first, whatever the circuit did. The
-            # SPEC is about magnitude; the sign stays in tran_metrics.
-            sr = tm.get("slew_rate")
-            put("slew_rate", abs(sr) if sr is not None else None)
+            # WHICH EDGE is measured belongs to the testbench, not to the
+            # design. Taking abs() of the FIRST edge removed the sign
+            # dependence and left the edge dependence untouched: the same deck,
+            # the same source, only the `.tran` start moved, scored 0.045 V/us
+            # opening on the slow edge and 0.450 V/us opening on the fast one.
+            # That turned a deterministic false-FAIL into a stimulus-dependent
+            # false-PASS, which is worse. A slew-rate spec is a `min:`, so the
+            # number it is scored on is the SLOWEST complete edge in the
+            # record -- the same number whichever edge the record opens on.
+            # The signed first-edge value stays in tran_metrics, with a note
+            # naming the edge and counting the others.
+            put("slew_rate", tm.get("slew_rate_worst"))
             put("overshoot_pct", tm.get("overshoot_pct"))
-            # Propagation delay needs an input reference. _pick_input, NOT
-            # _pick_output: the latter falls back to another OUTPUT.
-            in_key = _pick_input(signals, input_signal)
-            if in_key is None or in_key == key:
+            # A propagation delay needs an input reference AND an output that
+            # is not that same reference. The two failures are different and
+            # they used to share one message: a result holding ONLY a stimulus
+            # (so _pick_output falls back onto it and in_key == key) was told
+            # it "carries no input signal", which is the exact opposite of what
+            # is wrong with it, and it sent the reader off to name an
+            # `input_signal` that is already there.
+            if in_key is None:
                 why["prop_delay"] = (
                     f"a propagation delay is measured from an INPUT to an "
                     f"output, and this result carries no input signal "
@@ -575,19 +593,24 @@ def _compute_metrics(dc: Any, ac: Any, tran: Any, noise: Any, stb: Any,
                     f"deck's save list. A 50 pct to 50 pct time between two "
                     f"OUTPUTS is not a propagation delay."
                 )
+            elif in_key == key:
+                why["prop_delay"] = (
+                    f"a propagation delay is measured from an INPUT to an "
+                    f"output, and here they are the SAME vector: {key!r} was "
+                    f"chosen as both the stimulus and the output (signals: "
+                    f"{sorted(signals)}). The delay of a waveform against "
+                    f"itself is zero and means nothing. Save the stage's "
+                    f"output in the deck, or name it via `output_signal`."
+                )
+            elif same_axis:
+                put("prop_delay", measure.prop_delay(t, y_in, y))
             else:
-                t_in, y_in = _signal_xy(signals[in_key])
-                # Both waveforms must be on the SAME time axis for a 50-50
-                # delay to mean anything.
-                if len(y_in) == len(t) and t_in == t:
-                    put("prop_delay", measure.prop_delay(t, y_in, y))
-                else:
-                    why["prop_delay"] = (
-                        f"the input signal {in_key!r} is sampled on a "
-                        f"different time axis ({len(t_in)} points) from the "
-                        f"output ({len(t)} points), so a 50 pct to 50 pct "
-                        f"delay between them is not defined"
-                    )
+                why["prop_delay"] = (
+                    f"the input signal {in_key!r} is sampled on a "
+                    f"different time axis ({len(t_in)} points) from the "
+                    f"output ({len(t)} points), so a 50 pct to 50 pct "
+                    f"delay between them is not defined"
+                )
 
     # -- noise ---------------------------------------------------------------
     nsd = _as_dict(noise)

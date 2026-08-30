@@ -11,14 +11,14 @@ description: >
   Target inductance ~2nH at 5 GHz for LNA matching network.
 specs:
   inductance:
-    target: 2e-9
+    target: 2.0e-9
     tolerance: 10%
     unit: H
-    freq: 5e9
+    freq: 5.0e+9
   quality_factor:
     min: 8
     unit: ""
-    freq: 5e9
+    freq: 5.0e+9
   self_resonance:
     min: 15
     unit: GHz

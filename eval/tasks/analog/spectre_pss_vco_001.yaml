@@ -11,7 +11,7 @@ description: >
   PSS finds periodic steady-state, PNoise computes phase noise spectrum.
 specs:
   frequency:
-    target: 1e9
+    target: 1.0e+9
     tolerance: 20%
     unit: Hz
   phase_noise_1MHz:

@@ -7,7 +7,7 @@ load: 10p
 description: Design a type-II charge pump PLL for 1 GHz clock generation.
 specs:
   frequency:
-    target: 1.0e9
+    target: 1.0e+9
     unit: Hz
   jitter_rms:
     max: 5.0e-12

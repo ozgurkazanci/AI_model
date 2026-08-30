@@ -10,7 +10,7 @@ specs:
     target: 3
     unit: bits
   sampling_rate:
-    min: 1.0e9
+    min: 1.0e+9
     unit: Sa/s
   dnl:
     max: 0.5
