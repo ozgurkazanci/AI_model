@@ -13,7 +13,7 @@ pip install -r requirements.txt
 
 # Run tests (must pass)
 PYTHONPATH=src python -m pytest tests/ -v --tb=short
-# Expected: 641 passed, 0 skipped (8 skip when the TSMC PDK is absent)
+# Expected: 766 passed (758 passed / 8 skipped when the TSMC PDK is absent)
 
 # Run full pipeline demo
 PYTHONPATH=src python scripts/demo_full_pipeline.py
@@ -89,6 +89,18 @@ rather than as a baseline.
 | Eval | `eval/runner.py`, `eval/baseline.py` | real agent loop; refuses to score without a model |
 | Device sizing | `optimizer/scipy_opt.py`, `optimizer/circuit.py` | finds R2 = 10.0115k vs analytic 10k from simulation alone, 40 evaluations |
 | iGPU inference | `inference/llama_server.py` | AMD 780M via Vulkan, 74.7 tok/s Q4_K_M vs 49.0 on CPU |
+| HF inference | `inference/engine.py` | `TransformersEngine` emits the same in-contract tool call as the GGUF path on the same prompt |
+| Tool-call parsing | `inference/parser.py` | 4322/4322 corpus calls parsed; contract and required-argument validation |
+| Device sizing | `optimizer/scipy_opt.py`, `circuit.py` | finds R2 = 10.0115k against an analytic 10k from simulation alone, in 40 evaluations |
+| Eval | `eval/runner.py`, `eval/baseline.py`, `scripts/measure_baseline.py` | one shared agent loop; all three refuse to score without a model |
+| Adapter conformance | `tests/test_adapter_schema_conformance.py` | static audit of every `Result(...)` in every adapter against the frozen schema |
+
+### The agent loop lives in ONE place
+
+`asic_ai.inference.runner.run_agent_loop`. Four callers use it: `eval/runner.py`,
+`scripts/measure_baseline.py`, `agent/loop.py` and `InferenceRunner`. There were
+once three implementations and two of them produced nothing. Do not add a fifth;
+extend the shared one.
 
 ## Local Inference on the iGPU
 

@@ -44,8 +44,29 @@ above accepted whatever it was handed.
 | `eval/runner.py` | 78 eval tasks | returned `passed=True, score=85.5` for every task. `eval/baseline.py` was a bare `pass`. |
 | `optimizer/bayesian.py` | Bayesian optimization | returned each parameter's lower bound, score 0.0, `converged=True`, having called `eval_fn` zero times. |
 
+| `optimizer/bayesian.py` | Bayesian optimization | returned each parameter's lower bound, score 0.0, `converged=True`, having called `eval_fn` zero times. |
+| `inference/engine.py` | three model backends | `TransformersEngine` and `VLLMEngine` returned `text=""` with zero token counts, which every caller reads as "the model declined to answer". `get_token_count` was `len(text.split())`, a 1.8x undercount of the system message. |
+| `inference/runner.py` | the agent loop | used the literal string `"Dummy response"` as the model's output. |
+| `agent/loop.py` | the agent loop, again | a `while` whose body was comments, then reported `status="max_steps_reached"` -- a loop that ran nothing claiming to have exhausted its budget. |
+| `adapters/ngspice.py` | the DEFAULT backend | all SEVEN result constructors used field names absent from the schema, so every method raised a ValidationError. |
+
 Two more in the data itself: 657 of 1050 SFT examples carried a different system
 prompt from the other 393, and three tool calls named tools that do not exist.
+
+And in the measurement layer beneath all of it: five adversarial passes have now
+found 16, then 21, then 12, then 9 defects. Most were not missing code but
+INVERTED LOGIC, a threshold derived from the quantity it was meant to validate,
+or a guard applied on one path and not its mirror. Three recurring shapes, worth
+recognising before writing a fix:
+
+  - a tolerance that scales with the thing it checks vanishes exactly when the
+    check is needed (a flat-band tolerance proportional to window span; a drift
+    test against this record's own excursion);
+  - a guard suppressed because a twin is assumed to cover the case, where the
+    twin silently covers nothing (a polarity test cannot classify a NaN);
+  - a fix that removes a symptom and leaves the degree of freedom (taking the
+    absolute value of a slew rate removes the sign but not which edge was
+    measured).
 
 The common shape: **a placeholder that returns a plausible success value rather
 than failing.** Tests passed throughout, because they asserted `is not None`,
@@ -132,7 +153,7 @@ point counts, or the placeholder's own output.
 ## Project Commands
 
 ```bash
-PYTHONPATH=src python -m pytest tests/ -v          # Run tests (641 passed)
+PYTHONPATH=src python -m pytest tests/ -v          # Run tests (766 passed)
 PYTHONPATH=src python scripts/project_stats.py     # Show stats
 PYTHONPATH=src python scripts/demo_ai_ngspice.py   # E2E AI+ngspice demo
 PYTHONPATH=src python scripts/demo_rl_ngspice.py   # RL env + ngspice
@@ -147,7 +168,7 @@ PYTHONPATH=src python scripts/chat.py --model outputs/sft_local/final  # Chat
 
 - Source: `src/asic_ai/` (47 modules)
 - Scripts: `scripts/` (44 CLI tools)
-- Tests: `tests/` (26 files, 641 passed)
+- Tests: `tests/` (28 files, 766 passed)
 - Eval: `eval/tasks/` (74 tasks: 50 analog + 24 digital)
 - Data: `data/sft/` (15 files, 1032 total: 929 train + 103 val)
 - Configs: `configs/eda_tools.yaml`, `configs/training_profiles.yaml`
