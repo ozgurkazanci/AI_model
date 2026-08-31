@@ -51,7 +51,7 @@ server:
 
 models:
   # Produced by: merge_lora.py -> convert_hf_to_gguf.py -> llama-quantize.exe
-  default: "models/gguf/asic-ai-0.5b-q4_k_m.gguf"
+  default: "models/gguf/asic-ai-0.5b-945ex-q4_k_m.gguf"
   f16: "models/gguf/asic-ai-0.5b-f16.gguf"
 
 # Measured on this machine with llama-bench, coopmat disabled, 780M.

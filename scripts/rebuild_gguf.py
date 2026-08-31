@@ -108,8 +108,21 @@ def main() -> int:
     run([sys.executable, str(convert), str(merged),
          "--outfile", str(f16), "--outtype", "f16"],
         f"convert -> {f16.name}")
-    run([str(quantize), str(f16), str(quant), args.quant],
-        f"quantize -> {quant.name}")
+
+    # llama-quantize.exe reads its argv in the ANSI codepage, so a repo path
+    # with a non-ASCII character (this one has an U-umlaut) arrives mangled and
+    # the file "does not exist". Stage the work in the temp dir, which is
+    # ASCII, and move the result back. Verified 2026-08-31: quantize failed in
+    # the repo tree and succeeded unchanged from the staging dir.
+    import shutil
+    import tempfile
+    with tempfile.TemporaryDirectory(prefix="gguf_quant_") as td:
+        staged_f16 = Path(td) / f16.name
+        staged_quant = Path(td) / quant.name
+        shutil.copy2(f16, staged_f16)
+        run([str(quantize), str(staged_f16), str(staged_quant), args.quant],
+            f"quantize -> {quant.name}")
+        shutil.move(str(staged_quant), quant)
 
     info = {
         "gguf": quant.name,

@@ -98,8 +98,10 @@ point counts, or the placeholder's own output.
 - `from_pretrained()`: use `dtype=` NOT `torch_dtype=`
 - `ToolCallParser()`: takes NO constructor arguments
 - `ParsedToolCall`: Pydantic model with `.name`, `.arguments` (NOT dict)
-- `torch.load` requires torch >= 2.6 for safe loading (CVE-2025-32434)
-- Cannot resume from checkpoint with torch 2.5.1
+- `torch.load` requires torch >= 2.6 for safe loading (CVE-2025-32434).
+  Verified empirically 2026-08-31: on torch 2.5.1 `--resume` dies with the CVE
+  ValueError; after upgrading to torch 2.13.0+cpu the same command resumed
+  cleanly from checkpoint-100 (step counter continued at 101/711).
 
 ## Pydantic Schema Field Names (EXACT -- DO NOT GUESS)
 
@@ -144,7 +146,8 @@ point counts, or the placeholder's own output.
 ## Environment
 
 - Python 3.11.9 on Windows 11
-- PyTorch 2.5.1+cpu (DirectML incompatible with 2.5)
+- PyTorch 2.13.0+cpu (upgraded 2026-08-31 to unlock checkpoint resume; the old
+  2.5.1 pin existed for DirectML, which proved unusable on this machine anyway)
 - transformers 5.16.1
 - KiCad 10.0 (ngspice.dll)
 - WSL Alma_EDA (Cadence EDA)
