@@ -264,6 +264,13 @@ def health(base_url: str, timeout: int = 5) -> bool:
 
 # ----------------------------------------------------------------- engine ---
 
+# "Use whatever configs/local_inference.yaml says about grammar constraining."
+# A sentinel, because `grammar=None` must keep meaning "explicitly
+# unconstrained" -- `arg or discover()` has already hidden the explicit-none
+# path three times in this repo.
+GRAMMAR_FROM_CONFIG = object()
+
+
 class LlamaServerEngine(ModelEngine):
     """ModelEngine backed by llama.cpp's OpenAI-compatible endpoint.
 
@@ -271,14 +278,29 @@ class LlamaServerEngine(ModelEngine):
     chat templating, so `messages` is passed through unchanged -- which matters,
     because the system message must stay byte-identical to the training-time
     output of build_system_message().
+
+    When `grammar` is left at GRAMMAR_FROM_CONFIG and the config enables
+    inference.grammar_constrained, every generation carries the GBNF from
+    asic_ai.inference.grammar, which makes tool names outside the contract and
+    malformed call JSON unsamplable. Pass grammar=None to measure the
+    unconstrained model, or a GBNF string to constrain differently.
     """
 
     def __init__(self, base_url: str | None = None, model: str = "local",
-                 timeout: int = 300):
+                 timeout: int = 300, grammar: Any = GRAMMAR_FROM_CONFIG):
         self.base_url = (base_url or os.environ.get(ENV_URL)
                          or ServerConfig.from_config().base_url).rstrip("/")
         self.model = model
         self.timeout = timeout
+        if grammar is GRAMMAR_FROM_CONFIG:
+            inf = load_config().get("inference") or {}
+            if inf.get("grammar_constrained", False):
+                from asic_ai.inference.grammar import tool_call_grammar
+                self.grammar: str | None = tool_call_grammar()
+            else:
+                self.grammar = None
+        else:
+            self.grammar = grammar
 
     def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         req = urllib.request.Request(
@@ -298,6 +320,8 @@ class LlamaServerEngine(ModelEngine):
         }
         if "stop" in kwargs:
             payload["stop"] = kwargs["stop"]
+        if self.grammar is not None:
+            payload["grammar"] = self.grammar
 
         data = self._post("/v1/chat/completions", payload)
         choice = (data.get("choices") or [{}])[0]
