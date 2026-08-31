@@ -30,6 +30,13 @@ Guarded by `tests/test_system_prompt_consistency.py` (43 tests): one prompt
 variant across the corpus, contract-only tool names, and no module referencing
 `SYSTEM_PROMPT` outside `format.py`.
 
+Decoding is grammar-constrained since 2026-08-31: `asic_ai/inference/grammar.py`
+derives a GBNF from `TOOL_DEFINITIONS` (never hand-write the name list) and
+`LlamaServerEngine` attaches it when `inference.grammar_constrained` is true in
+`configs/local_inference.yaml`. Out-of-contract tool names and malformed call
+JSON are unsamplable; measured effect on the 77-task eval: hallucinated calls
+30 -> 0, unparseable turns 20 -> 4. Pass `grammar=None` to measure the raw model.
+
 ## What Was Fabricated, and How It Stayed Hidden
 
 Read this before trusting any number in this repo's history. Five layers
@@ -156,7 +163,7 @@ point counts, or the placeholder's own output.
 ## Project Commands
 
 ```bash
-PYTHONPATH=src python -m pytest tests/ -v          # Run tests (766 passed)
+PYTHONPATH=src python -m pytest tests/ -v          # Run tests (1032 passed)
 PYTHONPATH=src python scripts/project_stats.py     # Show stats
 PYTHONPATH=src python scripts/demo_ai_ngspice.py   # E2E AI+ngspice demo
 PYTHONPATH=src python scripts/demo_rl_ngspice.py   # RL env + ngspice
