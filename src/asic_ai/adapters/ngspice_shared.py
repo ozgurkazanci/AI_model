@@ -729,45 +729,70 @@ class NgspiceSharedAdapter(SimulatorAdapter):
     # -- netlist assembly -------------------------------------------------
 
     def _analysis_card(self, kind: str, params: Any, netlist: str) -> Optional[str]:
-        """Synthesise the analysis directive when the deck does not carry one."""
+        """Synthesise the analysis directive when the deck does not carry one.
+
+        Every alternative below that is listed FIRST is a name from the frozen
+        tool contract (sim.ac: start_freq/stop_freq/points_per_decade,
+        sim.tran: stop_time/step_time, sim.noise: output_node/input_source).
+        The generic start/stop/step/points spellings are kept as fallbacks.
+        Until 2026-09-01 only the generic spellings were read, so a model
+        calling sim.ac EXACTLY as the contract documents it was still refused
+        with "params do not supply start/stop frequency" -- the fifth
+        contract-vs-implementation split in this repo, and the only one where
+        the contract side was the one nobody had ever exercised.
+        """
         opts = _options(params)
-        start = _param(params, "start")
-        stop = _param(params, "stop")
-        step = _param(params, "step")
-        points = _param(params, "points")
-        sweep = _param(params, "sweep_var")
+
+        def p(*names: str) -> Any:
+            for n in names:
+                v = _param(params, n)
+                if v is not None:
+                    return v
+            return None
+
+        step = p("step")
+        points = p("points")
+        sweep = p("sweep_var")
 
         if kind == "dc":
+            start, stop = p("start"), p("stop")
             if sweep and start is not None and stop is not None and step:
-                return f".dc {sweep} {start:g} {stop:g} {step:g}"
+                return f".dc {sweep} {float(start):g} {float(stop):g} {float(step):g}"
             return ".op"
         if kind == "ac":
+            start = p("start_freq", "start")
+            stop = p("stop_freq", "stop")
+            n = p("points_per_decade", "points")
             if start is None or stop is None:
                 raise NgspiceError(
                     "ac(): the netlist has no .ac card and params do not supply "
                     "start/stop frequency. Refusing to invent a sweep."
                 )
             variant = str(opts.get("ac_variant", "dec"))
-            n = int(points or 10)
-            return f".ac {variant} {n} {start:g} {stop:g}"
+            return f".ac {variant} {int(n or 10)} {float(start):g} {float(stop):g}"
         if kind == "tran":
+            stop = p("stop_time", "stop")
+            tstep = p("step_time", "step")
             if stop is None:
                 raise NgspiceError(
                     "tran(): the netlist has no .tran card and params do not "
                     "supply a stop time. Refusing to invent a sweep."
                 )
-            tstep = step or (float(stop) / 1000.0)
-            return f".tran {tstep:g} {float(stop):g}"
+            tstep = tstep or (float(stop) / 1000.0)
+            return f".tran {float(tstep):g} {float(stop):g}"
         if kind == "noise":
-            out_node = opts.get("output") or opts.get("out")
-            src = opts.get("source") or opts.get("input_source")
+            out_node = opts.get("output_node") or opts.get("output") or opts.get("out")
+            src = opts.get("input_source") or opts.get("source")
+            start = p("start_freq", "start")
+            stop = p("stop_freq", "stop")
             if not out_node or not src or start is None or stop is None:
                 raise NgspiceError(
                     "noise(): the netlist has no .noise card and params do not "
                     "supply output/source/start/stop. Refusing to invent one."
                 )
-            n = int(points or 100)
-            return f".noise v({out_node}) {src} dec {n} {start:g} {stop:g}"
+            n = p("points_per_decade", "points")
+            return (f".noise v({out_node}) {src} dec {int(n or 100)} "
+                    f"{float(start):g} {float(stop):g}")
         return None
 
     def _build_netlist(self, source: Any, kind: str, params: Any = None,

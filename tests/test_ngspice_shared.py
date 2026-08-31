@@ -746,3 +746,60 @@ class TestPdkConfigDegradesCleanly:
         netlist = "XM1 d g 0 0 nch_mac l=60n w=1u sigma=1\n"
         out = pdk_deck.apply_instance_params(netlist, "tsmc65")
         assert out.count("sigma=") == 1
+
+
+@skipif_no_ngspice
+class TestContractParamNames:
+    """The frozen contract's parameter names must reach the adapter.
+
+    TOOL_DEFINITIONS documents sim.ac(start_freq, stop_freq,
+    points_per_decade) and sim.tran(stop_time, step_time); until 2026-09-01
+    _analysis_card read only start/stop/step/points, so a call written EXACTLY
+    as the contract documents was refused with "params do not supply
+    start/stop frequency". The 945ex eval hit that refusal 214 times.
+    Reverting the alias fix makes each of these raise NgspiceError again.
+    """
+
+    RC = (
+        "* RC low-pass, no analysis card\n"
+        ".model nch nmos level=1 vto=0.5 kp=200u\n"
+        "V1 in 0 DC 0 AC 1\n"
+        "R1 in out 1k\n"
+        "C1 out 0 1n\n"
+        ".end\n"
+    )
+    RC_PULSE = (
+        "* RC step response, no analysis card\n"
+        "V1 in 0 PULSE(0 1 1u 1n 1n 1m 2m)\n"
+        "R1 in out 1k\n"
+        "C1 out 0 1n\n"
+        ".end\n"
+    )
+
+    def _adapter(self, tmp_path):
+        return NgspiceSharedAdapter(
+            AdapterConfig(binary_path="", work_dir=str(tmp_path)))
+
+    def test_ac_accepts_contract_names(self, tmp_path):
+        r = self._adapter(tmp_path).ac(
+            self.RC, {"start_freq": 10.0, "stop_freq": 1e8,
+                      "points_per_decade": 5})
+        assert len(r.frequencies) > 10
+        assert any(len(s.y_values) == len(r.frequencies)
+                   for s in r.signals.values())
+        # the sweep actually honoured the contract bounds
+        assert abs(r.frequencies[0] - 10.0) < 1.0
+        assert r.frequencies[-1] <= 1e8 * 1.01
+
+    def test_tran_accepts_contract_names(self, tmp_path):
+        r = self._adapter(tmp_path).tran(
+            self.RC_PULSE, {"stop_time": 20e-6, "step_time": 0.2e-6})
+        assert len(r.time) > 10
+        # RC tau = 1us: by 20us the step has fully settled to 1V
+        vout = next(s for n, s in r.signals.items() if "out" in n.lower())
+        assert abs(vout.y_values[-1] - 1.0) < 0.05
+
+    def test_generic_spellings_still_work(self, tmp_path):
+        r = self._adapter(tmp_path).ac(
+            self.RC, {"start": 10.0, "stop": 1e8, "points": 5})
+        assert len(r.frequencies) > 10
