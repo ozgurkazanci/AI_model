@@ -62,17 +62,24 @@ class TestPrepareTrainingData:
         assert 0 <= d_hard <= 1
         assert d_easy < d_hard  # Easy should have lower difficulty
 
-    def test_generate_pdk_corners_examples(self):
-        """Generate corners examples for the last missing tool."""
-        import random
-        sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
-        from prepare_training_data import generate_pdk_corners_examples
+    def test_fabricating_sources_stay_excluded(self):
+        """The mix must never re-admit the files that taught the failures.
 
-        examples = generate_pdk_corners_examples(random.Random(42), count=3)
-        assert len(examples) == 3
-        for ex in examples:
-            assert "messages" in ex
-            assert ex["primary_tool"] == "pdk.get_corners"
+        batch_v1/v2 taught sim.* without a netlist against invented success
+        data; augmented_v1/v2 carried formula-derived numbers and the
+        memorised opener the f32 A/B probe caught. The inline pdk.get_corners
+        generator (removed with this list) taught the empty '.subckt design'
+        shell the eval model reproduced 258 times. Deleting a name from
+        EXCLUDED_SOURCES must be a deliberate act that fails this test first.
+        """
+        sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
+        import prepare_training_data as ptd
+
+        assert {"batch_v1.jsonl", "batch_v2.jsonl",
+                "augmented_v1.jsonl", "augmented_v2.jsonl"} \
+            <= ptd.EXCLUDED_SOURCES
+        assert not hasattr(ptd, "generate_pdk_corners_examples"), \
+            "the stub-netlist corners generator must stay deleted"
 
 
 class TestTemplatesCoverage:

@@ -20,13 +20,9 @@ import json
 import logging
 import random
 import sys
-import uuid
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-
-from asic_ai.data.format import format_trajectory_for_sft, validate_sft_format
-from asic_ai.data.trajectory import Trajectory, TrajectoryStep, ToolCall
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("prepare")
@@ -34,60 +30,31 @@ log = logging.getLogger("prepare")
 SEP = "=" * 70
 
 
-def generate_pdk_corners_examples(rng: random.Random, count: int = 10) -> list[dict]:
-    """Generate examples for the last missing tool: pdk.get_corners."""
-    examples = []
-    for i in range(count):
-        steps = [
-            TrajectoryStep(step_index=0, role="user",
-                content="What PVT corners should I simulate for my design to ensure robustness?"),
-            TrajectoryStep(step_index=1, role="assistant",
-                content="Let me query the PDK for available process corners.",
-                tool_call=ToolCall(name="pdk.get_corners", call_id="call_001",
-                                  arguments={"pdk": "sky130"})),
-            TrajectoryStep(step_index=2, role="tool",
-                content=json.dumps({
-                    "corners": [
-                        {"name": "tt", "description": "Typical-Typical", "temp_c": 27, "vdd": 1.8},
-                        {"name": "ss", "description": "Slow-Slow", "temp_c": 125, "vdd": 1.62},
-                        {"name": "ff", "description": "Fast-Fast", "temp_c": -40, "vdd": 1.98},
-                        {"name": "sf", "description": "Slow-Fast", "temp_c": 27, "vdd": 1.8},
-                        {"name": "fs", "description": "Fast-Slow", "temp_c": 27, "vdd": 1.8},
-                    ],
-                    "recommended_minimum": ["tt", "ss", "ff"],
-                    "full_pvt": ["tt", "ss", "ff", "sf", "fs"],
-                })),
-            TrajectoryStep(step_index=3, role="assistant",
-                content="5 corners available. Minimum recommended: tt, ss, ff. Running corner simulation.",
-                tool_call=ToolCall(name="sim.corners", call_id="call_002",
-                                  arguments={"netlist": ".subckt design VDD VSS VIN VOUT\n.ends",
-                                            "corners": ["tt", "ss", "ff"]})),
-            TrajectoryStep(step_index=4, role="tool",
-                content=json.dumps([
-                    {"corner": "tt", "gain_db": round(62 + rng.gauss(0, 2), 1), "pm_deg": round(65 + rng.gauss(0, 3), 1)},
-                    {"corner": "ss", "gain_db": round(55 + rng.gauss(0, 2), 1), "pm_deg": round(58 + rng.gauss(0, 3), 1)},
-                    {"corner": "ff", "gain_db": round(68 + rng.gauss(0, 2), 1), "pm_deg": round(72 + rng.gauss(0, 3), 1)},
-                ])),
-            TrajectoryStep(step_index=5, role="assistant",
-                content="All corners pass. Worst case is SS corner with reduced gain and PM."),
-        ]
+# Files whose examples taught the exact behaviours the 945ex eval measured
+# failing, excluded at the source so a re-run cannot resurrect them:
+#   batch_v1/v2      600 sim.* calls with NO netlist argument, answered with
+#                    fabricated random "success" data -- the model passed a
+#                    real netlist in 5 of 357 eval sim calls because 65 pct of
+#                    its training calls carried none.
+#   augmented_v1/v2  numbers from a regex-over-W formula, not a simulator,
+#                    and a byte-identical opener + pdk.device_query in every
+#                    example -- the f32 A/B probe found that exact opener
+#                    memorised and emitted for every task, digital included.
+# Their replacement is grounded_v1.jsonl (generate_grounded_sft.py), whose
+# every observation came out of the real env. This list is the "fix the
+# generator, not the data" rule applied to the MIX: the files stay on disk
+# for archaeology, but no future train_final can include them.
+EXCLUDED_SOURCES = {
+    "batch_v1.jsonl", "batch_v2.jsonl",
+    "augmented_v1.jsonl", "augmented_v2.jsonl",
+    "demo_output.jsonl",
+}
 
-        traj = Trajectory(
-            id=f"corners_{uuid.uuid4().hex[:6]}", task_id="pvt_corners",
-            steps=steps, success=True,
-            final_score=round(0.85 + rng.uniform(0, 0.1), 3),
-            duration_seconds=6.0,
-        )
-        sft_msgs = format_trajectory_for_sft(traj)
-        is_valid, _ = validate_sft_format(sft_msgs)
-        if is_valid:
-            examples.append({
-                "id": traj.id, "task_id": traj.task_id,
-                "messages": sft_msgs, "score": traj.final_score,
-                "success": True, "primary_tool": "pdk.get_corners",
-            })
-
-    return examples
+# This module used to inline-generate 10 pdk.get_corners examples whose
+# sim.corners call carried the placeholder ".subckt design VDD VSS VIN VOUT"
+# -- the eval model reproduced that exact empty shell in 258 sim calls.
+# pdk.get_corners coverage now comes from grounded_v1's PDK-preamble examples,
+# with the same real deck the rest of the trajectory simulates.
 
 
 def estimate_difficulty(example: dict) -> float:
@@ -139,7 +106,8 @@ def main():
     for f in sorted(data_path.glob("*.jsonl")):
         if f.name.startswith("train_") or f.name.startswith("val_"):
             continue  # Skip output files
-        if f.name == "demo_output.jsonl":
+        if f.name in EXCLUDED_SOURCES:
+            print(f"  {f.name}: EXCLUDED (see EXCLUDED_SOURCES)")
             continue
         count = 0
         with open(f, encoding="utf-8") as fh:
@@ -151,13 +119,7 @@ def main():
                     count += 1
         print(f"  {f.name}: {count} examples")
 
-    # Step 2: Generate missing pdk.get_corners
-    print(f"\n[2/5] Generating pdk.get_corners examples...")
-    corners_examples = generate_pdk_corners_examples(rng, count=10)
-    for ex in corners_examples:
-        ex["_source"] = "generated_corners"
-    all_examples.extend(corners_examples)
-    print(f"  Added {len(corners_examples)} pdk.get_corners examples")
+    print(f"\n[2/5] Source mix...")
     print(f"  Total: {len(all_examples)} examples")
 
     # Step 3: Deduplicate by ID
@@ -175,26 +137,42 @@ def main():
     all_examples = unique
     print(f"  Unique: {len(all_examples)}")
 
-    # Step 4: Curriculum ordering
-    print(f"\n[4/5] Curriculum ordering...")
+    # Step 4: Train/val split, STRATIFIED BY SOURCE.
+    #
+    # The split used to take the hardest tail of the curriculum ordering as
+    # validation. Multi-turn examples with real netlists score as "hard", so
+    # that split sent 312 real-netlist sim calls to validation and left the
+    # training set with 211 -- the model TRAINED mostly on placeholder calls
+    # and was VALIDATED mostly on real ones. Sampling the val fraction from
+    # every source keeps both sides the same mixture.
+    print(f"\n[4/5] Stratified train/val split...")
+    by_source: dict[str, list] = {}
     for ex in all_examples:
+        by_source.setdefault(ex["_source"], []).append(ex)
+
+    train_examples, val_examples = [], []
+    for source in sorted(by_source):
+        group = by_source[source]
+        rng.shuffle(group)
+        n_val = round(len(group) * args.val_split)
+        val_examples.extend(group[:n_val])
+        train_examples.extend(group[n_val:])
+    print(f"  {len(train_examples)} train / {len(val_examples)} val, "
+          f"val drawn {args.val_split:.0%} from each of {len(by_source)} sources")
+
+    # Step 5: Curriculum ordering (train only -- val order is irrelevant).
+    print(f"\n[5/5] Curriculum ordering and saving...")
+    for ex in train_examples:
         ex["_difficulty"] = estimate_difficulty(ex)
-
     if args.curriculum:
-        all_examples.sort(key=lambda x: x["_difficulty"])
-        print(f"  Ordered: easy ({all_examples[0]['_difficulty']}) -> hard ({all_examples[-1]['_difficulty']})")
+        train_examples.sort(key=lambda x: x["_difficulty"])
+        print(f"  Ordered: easy ({train_examples[0]['_difficulty']}) -> "
+              f"hard ({train_examples[-1]['_difficulty']})")
     else:
-        rng.shuffle(all_examples)
+        rng.shuffle(train_examples)
         print(f"  Shuffled randomly")
-
-    # Step 5: Train/val split and save
-    print(f"\n[5/5] Saving...")
-    val_count = int(len(all_examples) * args.val_split)
-    train_count = len(all_examples) - val_count
-
-    # Take hardest examples for validation (better signal)
-    val_examples = all_examples[-val_count:] if val_count > 0 else []
-    train_examples = all_examples[:train_count]
+    val_count = len(val_examples)
+    train_count = len(train_examples)
 
     # Save train
     output_path = Path(args.output)

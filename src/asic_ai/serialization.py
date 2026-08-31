@@ -78,6 +78,14 @@ def _walk(obj: Any, path: str, found: list[str]) -> Any:
     if _is_bad_float(obj):
         found.append(path or "<root>")
         return None
+    if isinstance(obj, float):
+        # 6 significant digits. This text is what the MODEL reads: a raw
+        # double like 14.677992676220695 tokenizes to ~18 tokens, and one
+        # 37-point AC observation of them ate 3600 of the serving loop's
+        # 4000-char window. Rounding at the presentation layer keeps every
+        # sweep point visible to the model; the metric layer computes from
+        # the raw pydantic objects and never reads this text back.
+        return float(f"{obj:.6g}")
     if isinstance(obj, dict):
         return {k: _walk(v, f"{path}.{k}" if path else str(k), found)
                 for k, v in obj.items()}
