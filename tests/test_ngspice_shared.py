@@ -803,3 +803,43 @@ class TestContractParamNames:
         r = self._adapter(tmp_path).ac(
             self.RC, {"start": 10.0, "stop": 1e8, "points": 5})
         assert len(r.frequencies) > 10
+
+
+@skipif_no_ngspice
+class TestWedgedEngineRecovery:
+    """One bad deck must not poison the remaining 76 eval tasks.
+
+    The 824g eval's first malformed deck left ngspice in 'cannot recover and
+    awaits to be reset or detached'; every later run then failed with
+    "there aren't any circuits loaded" -- 32 cascade failures before the run
+    was killed. Recovery is a full DLL reload, triggered by that console
+    marker. Reverting the reload call leaves test_run_path_reloads failing.
+    """
+
+    GOOD = "* ok\nV1 in 0 DC 1\nR1 in out 1k\nR2 out 0 1k\n.op\n.end\n"
+
+    def test_reload_produces_a_working_engine(self, tmp_path):
+        from asic_ai.adapters.ngspice_shared import _NgspiceLibrary
+        a = NgspiceSharedAdapter(
+            AdapterConfig(binary_path="", work_dir=str(tmp_path)))
+        before = _NgspiceLibrary._instance
+        assert before is not None
+        a._ng = _NgspiceLibrary.reload()
+        a._lib = a._ng.dll
+        assert _NgspiceLibrary._instance is not before, "must be a NEW engine"
+        r = a.dc(self.GOOD, {})
+        assert len(r.op_points) >= 2, "reloaded engine must actually simulate"
+
+    def test_run_path_reloads_on_the_wedge_marker(self, tmp_path, monkeypatch):
+        from asic_ai.adapters import ngspice_shared as ns
+        a = NgspiceSharedAdapter(
+            AdapterConfig(binary_path="", work_dir=str(tmp_path)))
+        wedged_console = ["Error: ngspice.dll cannot recover and awaits to be "
+                          "reset or detached"]
+        monkeypatch.setattr(a._ng, "console_lines", lambda: wedged_console)
+        reloaded = []
+        monkeypatch.setattr(ns._NgspiceLibrary, "reload",
+                            classmethod(lambda cls: reloaded.append(1) or a._ng))
+        with pytest.raises(ns.NgspiceError):
+            a.dc(self.GOOD, {})
+        assert reloaded, "the wedge marker must trigger a DLL reload"

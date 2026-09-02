@@ -305,6 +305,34 @@ class _NgspiceLibrary:
             )
         return cls._instance
 
+    @classmethod
+    def reload(cls) -> "_NgspiceLibrary":
+        """Unload the wedged DLL and load a fresh one.
+
+        A deck ngspice cannot parse (the 824g eval's first bad deck put an
+        AC-only output name in a context that made it print 'Undefined
+        parameter [vdb]') can leave the engine in 'cannot recover and awaits
+        to be reset or detached'. In that state EVERY later load reports
+        \"there aren't any circuits loaded\": one bad deck from the model
+        poisoned all 76 remaining eval tasks. ngspice's own documentation
+        offers exactly one way back -- detach the library -- so this frees
+        the module handle and reinitialises. Windows-only by construction
+        (this whole adapter drives ngspice.dll through ctypes).
+        """
+        if cls._instance is None:
+            raise RuntimeError("reload() called before instance()")
+        path = cls._instance.dll_path
+        handle = cls._instance.dll._handle
+        cls._instance = None
+        try:
+            ctypes.windll.kernel32.FreeLibrary(
+                ctypes.c_void_p(handle))
+        except OSError as exc:  # pragma: no cover
+            log.warning("FreeLibrary on wedged ngspice failed: %s", exc)
+        log.warning("ngspice engine was unrecoverable; DLL reloaded")
+        cls._instance = _NgspiceLibrary(path)
+        return cls._instance
+
     # -- primitives --------------------------------------------------------
 
     def clear_console(self) -> None:
@@ -880,6 +908,14 @@ class NgspiceSharedAdapter(SimulatorAdapter):
         new_plots = [p for p in after if p not in before and p != "const"]
 
         if fatal or not new_plots or cur in (None, "", "const"):
+            # A wedged engine poisons every FUTURE run in this process (each
+            # would fail with "there aren't any circuits loaded" no matter how
+            # good its deck is), so recover it before reporting this failure.
+            # The failure itself is still raised: recovery must never turn a
+            # bad deck into a silent retry.
+            if any("cannot recover and awaits" in low for low in lowered):
+                self._ng = _NgspiceLibrary.reload()
+                self._lib = self._ng.dll
             raise NgspiceError(self._failure_message(fatal, cur, new_plots, pdk))
 
         # Remembered so measure_idd can tell a 0 V sense source from a rail.
