@@ -335,45 +335,55 @@ class CircuitDesignEnv:
         as -1.0, which is indistinguishable from a design that was measured and
         failed, and that silently pins the reward to the floor.
         """
-        specs = args.get("specs", self.state.task_specs)
+        # The TASK's specs are the contract being scored. They used to be
+        # overridable by the call's own `specs` argument, and the 824g eval's
+        # two "passes" were exactly that override: edge_detector_001 re-sent
+        # the task specs MINUS the 250 MHz clock spec its own numbers failed,
+        # and decoder_3et al. sent booleans it then asserted. The argument now
+        # only fills a vacuum (a chat session with no task specs); with a task
+        # loaded, the task decides what is checked.
+        specs = self.state.task_specs or args.get("specs", {})
 
-        explicit = args.get("results")
-        if explicit:
-            # Caller supplied measurements directly; trust them as spec-keyed
-            # -- but only the NUMBERS. The 824g eval passed values wrapped in
-            # dicts ({"dc_gain": {"value": 60, "unit": "dB"}}), and handing
-            # those to RewardFunction raised TypeError deep inside the scoring
-            # ("'<=' not supported between 'dict' and 'int'"), which read as
-            # "no usable reward function" -- indistinguishable from a missing
-            # reward. A non-numeric entry is an unmeasurable with a reason the
-            # model can act on, not a crash.
-            measured = {}
-            unmeasurable: dict[str, str] = {}
-            for k, v in dict(explicit).items():
-                if isinstance(v, bool) or not isinstance(v, (int, float)):
-                    unmeasurable[k] = (
-                        f"result must be a number, got {type(v).__name__}; "
-                        "pass the bare measured value")
-                else:
-                    measured[k] = v
-        else:
-            extraction = spec_extract.extract_specs(
-                specs,
-                dc=self.state.analyses.get("dc"),
-                ac=self.state.analyses.get("ac"),
-                tran=self.state.analyses.get("tran"),
-                noise=self.state.analyses.get("noise"),
-                stb=self.state.analyses.get("stb"),
-                # The deck is the only thing that can tell a 0 V sense source
-                # from a supply rail, or spot a current-source-biased block
-                # whose supply current is not in the operating point at all --
-                # but it has to be the deck the numbers CAME FROM, not
-                # whichever deck the episode has reached by now.
-                netlist=self._reward_netlist(),
-                noise_freq=args.get("noise_freq", self.state.noise_freq),
-            )
-            measured = extraction.values
-            unmeasurable = extraction.unmeasurable
+        # Caller-supplied `results` are treated as a CLAIM, never as the
+        # measurement. Scoring always derives from the analyses that actually
+        # ran: in the 824g eval, 73 of 97 verifiable claimed values appeared
+        # in no prior observation -- the model invented numbers, sent them
+        # here, and the old trust-the-caller path scored them. An env that
+        # scores unexecuted physics is the fabrication pattern this repo
+        # documents, wearing a new hat.
+        claimed_raw = args.get("results") or {}
+        claimed = {k: v for k, v in dict(claimed_raw).items()
+                   if isinstance(v, (int, float)) and not isinstance(v, bool)}
+        extraction = spec_extract.extract_specs(
+            specs,
+            dc=self.state.analyses.get("dc"),
+            ac=self.state.analyses.get("ac"),
+            tran=self.state.analyses.get("tran"),
+            noise=self.state.analyses.get("noise"),
+            stb=self.state.analyses.get("stb"),
+            # The deck is the only thing that can tell a 0 V sense source
+            # from a supply rail, or spot a current-source-biased block
+            # whose supply current is not in the operating point at all --
+            # but it has to be the deck the numbers CAME FROM, not
+            # whichever deck the episode has reached by now.
+            netlist=self._reward_netlist(),
+            noise_freq=args.get("noise_freq", self.state.noise_freq),
+        )
+        measured = extraction.values
+        unmeasurable = extraction.unmeasurable
+
+        # Feedback on the claim, so an honest model can calibrate and a
+        # fabricating one is told exactly which numbers had no basis.
+        claim_mismatch: dict[str, str] = {}
+        for k, v in claimed.items():
+            if k in measured:
+                m = measured[k]
+                denom = max(abs(m), abs(v), 1e-30)
+                if abs(m - v) / denom > 0.05:
+                    claim_mismatch[k] = (f"claimed {v:g}, measured {m:g}")
+            else:
+                claim_mismatch[k] = (f"claimed {v:g}, but no analysis run "
+                                     "here produced this quantity")
 
         if unmeasurable:
             logger.info(
@@ -403,6 +413,7 @@ class CircuitDesignEnv:
                 "coverage": 0.0,
                 "measured": measured,
                 "unmeasurable": unmeasurable,
+                **({"claim_mismatch": claim_mismatch} if claim_mismatch else {}),
             }
 
         score = self._score(scored_specs, measured)
@@ -429,6 +440,7 @@ class CircuitDesignEnv:
             "coverage": coverage,
             "measured": measured,
             "unmeasurable": unmeasurable,
+            **({"claim_mismatch": claim_mismatch} if claim_mismatch else {}),
         }
 
     def _reward_netlist(self) -> str | None:

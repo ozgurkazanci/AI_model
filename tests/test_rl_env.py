@@ -109,46 +109,76 @@ class TestTokenizerExtensionScript:
         assert any("gm" in s for s in DEFAULT_TEST_STRINGS)
 
 
-class TestExplicitResultsHardening:
-    """A dict-wrapped spec.check value must degrade, not detonate.
+class TestSpecCheckCannotBeGamed:
+    """spec.check scores what was SIMULATED, never what was asserted.
 
-    The 824g eval passed {"dc_gain": {"value": 60, "unit": "dB"}} as results;
-    RewardFunction then raised TypeError comparing dict to int, which scored
-    as "no usable reward function". Reverting the numeric filter makes this
-    test fail with that same TypeError-driven zero.
+    The 824g eval's two "passes" were the old trust-the-caller path being
+    gamed by the model itself: fabricated results plus a narrowed specs dict
+    (edge_detector_001 silently dropped the 250 MHz spec its own claim would
+    have failed). Scoring now always derives from the stored analyses, the
+    task's specs cannot be overridden while a task is loaded, and claims are
+    answered with claim_mismatch feedback. Reverting the derive-only change
+    makes test_fabricated_results_cannot_pass fail by passing.
     """
 
-    def _env(self):
+    def _env(self, specs):
         import tempfile
         from asic_ai.adapters.mock import MockSimulatorAdapter
         from asic_ai.adapters.base import AdapterConfig
         from asic_ai.reward.reward import RewardFunction
         from asic_ai.training.rl_env import CircuitDesignEnv
 
-        task = {"id": "t", "specs": {"dc_gain": {"min": 40, "unit": "dB"}}}
+        task = {"id": "t", "specs": specs}
         env = CircuitDesignEnv(
             MockSimulatorAdapter(AdapterConfig(binary_path="",
                                                work_dir=tempfile.mkdtemp())),
-            RewardFunction.from_eval_task(task), max_steps=4)
+            RewardFunction.from_eval_task(task), max_steps=6)
         env.reset(task)
         return env
 
-    def test_dict_wrapped_value_reports_unmeasurable(self):
+    def test_fabricated_results_cannot_pass(self):
+        """The decoder_3to8 exploit, replayed: no analysis was run, the call
+        asserts perfect numbers and a self-serving specs dict."""
         import json
-        env = self._env()
+        env = self._env({"correct": {"min": 1.0, "unit": "bool"},
+                         "glitch_free": {"min": 1.0, "unit": "bool"}})
         r = env.step({"name": "spec.check", "arguments": {
-            "results": {"dc_gain": {"value": 60, "unit": "dB"}},
-            "specs": {"dc_gain": {"min": 40, "unit": "dB"}}}})
+            "results": {"correct": 1.0, "glitch_free": 1.0},
+            "specs": {"correct": {"min": 0.0, "unit": "bool"}}}})
         out = json.loads(r.observation)
+        assert out["passed"] is False
         assert out["specs_measured"] == 0
-        assert "number" in out["unmeasurable"]["dc_gain"]
+        # and the task's TWO specs were checked, not the narrowed one
+        assert out["specs_checked"] == 2
 
-    def test_bare_number_still_scores(self):
+    def test_unsupported_claim_is_named_in_feedback(self):
         import json
-        env = self._env()
+        env = self._env({"dc_gain": {"min": 40, "unit": "dB"}})
         r = env.step({"name": "spec.check", "arguments": {
             "results": {"dc_gain": 60.0},
             "specs": {"dc_gain": {"min": 40, "unit": "dB"}}}})
         out = json.loads(r.observation)
-        assert out["specs_measured"] == 1
-        assert out["score"] > 0
+        assert out["passed"] is False
+        assert "no analysis" in out["claim_mismatch"]["dc_gain"]
+
+    def test_dict_wrapped_claims_do_not_crash_scoring(self):
+        """The TypeError class: dict-wrapped values are ignored as claims and
+        scoring still runs off the analyses (here: none)."""
+        import json
+        env = self._env({"dc_gain": {"min": 40, "unit": "dB"}})
+        r = env.step({"name": "spec.check", "arguments": {
+            "results": {"dc_gain": {"value": 60, "unit": "dB"}},
+            "specs": {"dc_gain": {"min": 40, "unit": "dB"}}}})
+        out = json.loads(r.observation)
+        assert out["passed"] is False
+        assert out["specs_measured"] == 0
+
+    def test_chat_without_task_specs_still_accepts_call_specs(self):
+        """mikroelektronix resets with empty specs; the argument fills the
+        vacuum there (and only there)."""
+        import json
+        env = self._env({})
+        r = env.step({"name": "spec.check", "arguments": {
+            "results": {}, "specs": {"idd": {"max": 1.0, "unit": "A"}}}})
+        out = json.loads(r.observation)
+        assert out["specs_checked"] == 1
