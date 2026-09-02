@@ -107,3 +107,48 @@ class TestTokenizerExtensionScript:
         from asic_ai.tokenizer.extend import DEFAULT_TEST_STRINGS
         assert len(DEFAULT_TEST_STRINGS) > 5
         assert any("gm" in s for s in DEFAULT_TEST_STRINGS)
+
+
+class TestExplicitResultsHardening:
+    """A dict-wrapped spec.check value must degrade, not detonate.
+
+    The 824g eval passed {"dc_gain": {"value": 60, "unit": "dB"}} as results;
+    RewardFunction then raised TypeError comparing dict to int, which scored
+    as "no usable reward function". Reverting the numeric filter makes this
+    test fail with that same TypeError-driven zero.
+    """
+
+    def _env(self):
+        import tempfile
+        from asic_ai.adapters.mock import MockSimulatorAdapter
+        from asic_ai.adapters.base import AdapterConfig
+        from asic_ai.reward.reward import RewardFunction
+        from asic_ai.training.rl_env import CircuitDesignEnv
+
+        task = {"id": "t", "specs": {"dc_gain": {"min": 40, "unit": "dB"}}}
+        env = CircuitDesignEnv(
+            MockSimulatorAdapter(AdapterConfig(binary_path="",
+                                               work_dir=tempfile.mkdtemp())),
+            RewardFunction.from_eval_task(task), max_steps=4)
+        env.reset(task)
+        return env
+
+    def test_dict_wrapped_value_reports_unmeasurable(self):
+        import json
+        env = self._env()
+        r = env.step({"name": "spec.check", "arguments": {
+            "results": {"dc_gain": {"value": 60, "unit": "dB"}},
+            "specs": {"dc_gain": {"min": 40, "unit": "dB"}}}})
+        out = json.loads(r.observation)
+        assert out["specs_measured"] == 0
+        assert "number" in out["unmeasurable"]["dc_gain"]
+
+    def test_bare_number_still_scores(self):
+        import json
+        env = self._env()
+        r = env.step({"name": "spec.check", "arguments": {
+            "results": {"dc_gain": 60.0},
+            "specs": {"dc_gain": {"min": 40, "unit": "dB"}}}})
+        out = json.loads(r.observation)
+        assert out["specs_measured"] == 1
+        assert out["score"] > 0

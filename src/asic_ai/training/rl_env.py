@@ -339,9 +339,23 @@ class CircuitDesignEnv:
 
         explicit = args.get("results")
         if explicit:
-            # Caller supplied measurements directly; trust them as spec-keyed.
-            measured = dict(explicit)
+            # Caller supplied measurements directly; trust them as spec-keyed
+            # -- but only the NUMBERS. The 824g eval passed values wrapped in
+            # dicts ({"dc_gain": {"value": 60, "unit": "dB"}}), and handing
+            # those to RewardFunction raised TypeError deep inside the scoring
+            # ("'<=' not supported between 'dict' and 'int'"), which read as
+            # "no usable reward function" -- indistinguishable from a missing
+            # reward. A non-numeric entry is an unmeasurable with a reason the
+            # model can act on, not a crash.
+            measured = {}
             unmeasurable: dict[str, str] = {}
+            for k, v in dict(explicit).items():
+                if isinstance(v, bool) or not isinstance(v, (int, float)):
+                    unmeasurable[k] = (
+                        f"result must be a number, got {type(v).__name__}; "
+                        "pass the bare measured value")
+                else:
+                    measured[k] = v
         else:
             extraction = spec_extract.extract_specs(
                 specs,
