@@ -409,3 +409,103 @@ def test_rl_env_reports_when_nothing_is_measurable():
     assert payload["passed"] is False
     assert payload["coverage"] == 0.0
     assert "no spec could be measured" in payload["error"]
+
+
+class TestGroundedGeneratorMetrics:
+    """The six metrics the grounded SFT corpus scores against, each anchored
+    to a hand calculation and each REFUSED (with a reason) when the record
+    cannot support it. Added so spec.check's derive-only scoring (the
+    anti-gaming change) can measure what the generator's tasks specify.
+    """
+
+    def _dc(self, xs, ys, name="out"):
+        from asic_ai.tool_interface.schema import DCResult, SignalData
+        return DCResult(op_points={}, sweeps={
+            name: SignalData(name=name, x_values=list(xs), y_values=list(ys))})
+
+    def _tran(self, ts, ys, name="out"):
+        from asic_ai.tool_interface.schema import TranResult, SignalData
+        return TranResult(time=list(ts), signals={
+            name: SignalData(name=name, x_values=list(ts), y_values=list(ys))})
+
+    def test_dc_max_slope_matches_hand_calculation(self):
+        from asic_ai.adapters.spec_extract import extract_specs
+        # y = x^2 on [0,1] step 0.1: steepest chord = (1.0-0.81)/0.1 = 1.9
+        xs = [round(i * 0.1, 10) for i in range(11)]
+        ys = [x * x for x in xs]
+        got = extract_specs({"max_gain": {"min": 1.0, "unit": "V/V"}},
+                            dc=self._dc(xs, ys))
+        assert abs(got.values["max_gain"] - 1.9) < 1e-9
+
+    def test_nested_dc_grid_is_refused_for_slope(self):
+        from asic_ai.adapters.spec_extract import extract_specs
+        xs = [0.0, 0.5, 1.0, 0.0, 0.5, 1.0]
+        ys = [0.0, 0.2, 0.4, 0.1, 0.3, 0.5]
+        got = extract_specs({"max_gain": {"min": 1.0, "unit": "V/V"}},
+                            dc=self._dc(xs, ys))
+        assert "max_gain" not in got.values
+
+    def test_output_tc_is_least_squares_slope_and_needs_temp_sweep(self):
+        from asic_ai.adapters.spec_extract import extract_specs
+        temps = list(range(-40, 130, 10))
+        ys = [1.2 + 0.002 * t for t in temps]      # exactly 2 mV/C
+        deck = "* bg\n.dc temp -40 125 10\n.end\n"
+        got = extract_specs({"output_tc": {"max": 5.0, "unit": "mV/C"}},
+                            dc=self._dc(temps, ys), netlist=deck)
+        # spec unit mV/C: 0.002 V/C = 2.0 mV/C
+        assert abs(got.values["output_tc"] - 2.0) < 1e-6
+        # same data, but the deck sweeps a SOURCE: no TC exists
+        got2 = extract_specs({"output_tc": {"max": 5.0, "unit": "mV/C"}},
+                             dc=self._dc(temps, ys),
+                             netlist="* x\n.dc VDD 0 1.8 0.1\n.end\n")
+        assert "output_tc" not in got2.values
+
+    def test_iout_from_single_branch_and_ambiguity_refused(self):
+        from asic_ai.tool_interface.schema import DCResult, SignalData
+        from asic_ai.adapters.spec_extract import extract_specs
+        xs = [0.0, 0.5, 1.0, 1.5]
+        branch = SignalData(name="vds#branch", x_values=xs,
+                            y_values=[0.0, -50e-6, -99e-6, -100e-6])
+        res = DCResult(op_points={}, sweeps={"vds#branch": branch})
+        got = extract_specs({"iout_max": {"min": 1e-6, "unit": "uA"}}, dc=res)
+        assert abs(got.values["iout_max"] - 100.0) < 1e-6  # in uA
+
+        res2 = DCResult(op_points={}, sweeps={
+            "vds#branch": branch,
+            "vbias#branch": SignalData(name="vbias#branch", x_values=xs,
+                                       y_values=[1e-6] * 4)})
+        got2 = extract_specs({"iout_max": {"min": 1e-6, "unit": "uA"}}, dc=res2)
+        assert "iout_max" not in got2.values
+        assert "ambiguous" in got2.unmeasurable["iout_max"]
+
+    def test_osc_freq_from_regular_crossings_and_chirp_refused(self):
+        import math
+        from asic_ai.adapters.spec_extract import extract_specs
+        f = 1e6
+        ts = [i * 5e-9 for i in range(600)]         # 3 us at 5 ns
+        ys = [math.sin(2 * math.pi * f * t) for t in ts]
+        got = extract_specs({"osc_freq": {"min": 1e5, "unit": "Hz"}},
+                            tran=self._tran(ts, ys))
+        assert abs(got.values["osc_freq"] - f) / f < 0.02
+
+        chirp = [math.sin(2 * math.pi * (f * (1 + 3 * t / 3e-6)) * t)
+                 for t in ts]
+        got2 = extract_specs({"osc_freq": {"min": 1e5, "unit": "Hz"}},
+                             tran=self._tran(ts, chirp))
+        assert "osc_freq" not in got2.values
+        assert "irregular" in got2.unmeasurable["osc_freq"]
+
+    def test_vout_final_is_the_last_sample(self):
+        from asic_ai.adapters.spec_extract import extract_specs
+        ts = [i * 1e-6 for i in range(21)]
+        ys = [1.0 - math.exp(-t / 1e-6) for t in ts]
+        got = extract_specs({"vout_final": {"min": 0.9, "unit": "V"}},
+                            tran=self._tran(ts, ys))
+        assert abs(got.values["vout_final"] - ys[-1]) < 1e-12
+
+    def test_vout_swing_alias_reaches_output_swing(self):
+        from asic_ai.adapters.spec_extract import extract_specs
+        xs = [0.0, 0.5, 1.0]
+        got = extract_specs({"vout_swing": {"min": 0.1, "unit": "V"}},
+                            dc=self._dc(xs, [0.2, 0.9, 1.7]))
+        assert abs(got.values["vout_swing"] - 1.5) < 1e-12

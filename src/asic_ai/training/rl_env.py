@@ -492,7 +492,24 @@ class CircuitDesignEnv:
         if self.reward_fn is None:
             return None
 
-        compute = getattr(self.reward_fn, "compute", None)
+        reward_fn = self.reward_fn
+        if not (self.state and self.state.task_specs) and specs:
+            # Vacuum-fill sessions (a chat with no task loaded, and the SFT
+            # generator) reach here with an env whose RewardFunction was built
+            # from EMPTY task specs: extraction honoured the call's specs but
+            # scoring ignored them, so a design meeting every threshold with
+            # 2x margin scored 0.0. Score against the same specs that were
+            # extracted. With a task loaded this path never runs, so the
+            # anti-gaming rule (the task decides what is checked) is intact.
+            try:
+                from asic_ai.reward.reward import RewardFunction
+                reward_fn = RewardFunction.from_eval_task(
+                    {"id": self.state.task_id if self.state else "adhoc",
+                     "specs": specs})
+            except Exception:
+                logger.exception("could not build ad-hoc RewardFunction")
+
+        compute = getattr(reward_fn, "compute", None)
         if callable(compute):
             try:
                 return float(compute(results=measured).total_reward)

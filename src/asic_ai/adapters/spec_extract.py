@@ -122,6 +122,26 @@ ALIASES: dict[str, str] = {
     "v_out": "vout",
     "vref": "vout",
     "output_swing": "output_swing",
+    "vout_swing": "output_swing",
+    "swing": "output_swing",
+
+    # -- dc sweep shape ------------------------------------------------------
+    # The grounded SFT generator (and any VTC-style task) names the maximum
+    # small-signal slope of a monotone dc sweep "max_gain" in V/V. It is a
+    # different quantity from the AC gains above: no frequency axis exists.
+    "max_gain": "dc_max_slope",
+    "dc_slope": "dc_max_slope",
+    "vtc_gain": "dc_max_slope",
+    "iout_max": "iout_max",
+    "iout_swing": "iout_swing",
+    "output_tc": "output_tc",
+
+    # -- transient extras ----------------------------------------------------
+    "vout_final": "vout_final",
+    "final_value": "vout_final",
+    "osc_freq": "osc_freq",
+    "oscillation_frequency": "osc_freq",
+    "fosc": "osc_freq",
 
     # -- transient -----------------------------------------------------------
     "slew_rate": "slew_rate",
@@ -151,6 +171,12 @@ DIMENSIONS: dict[str, str] = {
     "idd": "current",
     "vout": "voltage",
     "output_swing": "voltage",
+    "vout_final": "voltage",
+    "dc_max_slope": "gain_vv",
+    "iout_max": "current",
+    "iout_swing": "current",
+    "output_tc": "tc_voltage",
+    "osc_freq": "frequency",
     "slew_rate": "slew",
     "settling_time": "time",
     "prop_delay": "time",
@@ -181,6 +207,8 @@ _SCALES: dict[str, dict[str, float]] = {
     "angle": {"deg": 1.0, "degrees": 1.0, "degree": 1.0, "": 1.0},
     "percent": {"%": 1.0, "percent": 1.0, "": 1.0},
     "gain_db_only": {"db": 1.0, "": 1.0},
+    "gain_vv": {"v/v": 1.0, "": 1.0},
+    "tc_voltage": {"v/c": 1.0, "mv/c": 1e-3, "uv/c": 1e-6},
     # ngspice's inoise_spectrum is referred to the source named on the .noise
     # card, so its UNIT depends on that source: V/sqrt(Hz) for a voltage source
     # and A/sqrt(Hz) for a current source. One table holding both let a TIA
@@ -530,6 +558,55 @@ def _compute_metrics(dc: Any, ac: Any, tran: Any, noise: Any, stb: Any,
                 )
             elif y:
                 put("output_swing", max(y) - min(y))
+                if len(xs) == len(y) and len(xs) >= 3:
+                    slopes = [abs((y[i + 1] - y[i]) / (xs[i + 1] - xs[i]))
+                              for i in range(len(xs) - 1) if xs[i + 1] != xs[i]]
+                    if slopes:
+                        put("dc_max_slope", max(slopes))
+                    # A voltage temperature coefficient only exists when the
+                    # sweep variable IS temperature, and only the deck knows
+                    # that. A least-squares slope, not endpoint difference:
+                    # a bandgap's curvature would make the endpoints lie about
+                    # the local behaviour around nominal.
+                    if netlist and re.search(r"^\s*\.dc\s+temp\b", netlist,
+                                             re.IGNORECASE | re.MULTILINE):
+                        n = len(xs)
+                        mx = sum(xs) / n
+                        my_ = sum(y) / n
+                        den = sum((a - mx) ** 2 for a in xs)
+                        if den > 0:
+                            put("output_tc",
+                                sum((a - mx) * (b - my_)
+                                    for a, b in zip(xs, y)) / den)
+
+        # Output CURRENT of a swept dc run lives in a '#branch' vector. Which
+        # one is the output is only unambiguous when the caller names it or
+        # exactly one non-supply branch exists; guessing between two branch
+        # currents is how a supply current becomes an "output" current.
+        branch_named = (output_signal if output_signal
+                        and "#branch" in output_signal.lower() else None)
+        branches = {k: v for k, v in sweeps.items()
+                    if "#branch" in k.lower()
+                    and k.lower() not in ("vdd#branch", "vss#branch")}
+        pick = None
+        if branch_named and branch_named in sweeps:
+            pick = branch_named
+        elif len(branches) == 1:
+            pick = next(iter(branches))
+        elif len(branches) > 1:
+            why["iout_max"] = why["iout_swing"] = (
+                f"ambiguous: {sorted(branches)} are all branch currents; "
+                f"name the output via `output_signal`")
+        if pick:
+            bxs, by = _signal_xy(sweeps[pick])
+            if by and len(bxs) == len(by) and _is_monotone_axis(bxs):
+                put("iout_max", max(abs(v) for v in by))
+                put("iout_swing", max(by) - min(by))
+            elif by:
+                why["iout_max"] = why["iout_swing"] = (
+                    f"refused: the sweep axis of {pick!r} is not monotonic "
+                    f"(a nested '.dc' grid); an extremum across both sweeps "
+                    f"is not this output's compliance behaviour")
 
     # -- transient -----------------------------------------------------------
     trd = _as_dict(tran)
@@ -611,6 +688,45 @@ def _compute_metrics(dc: Any, ac: Any, tran: Any, noise: Any, stb: Any,
                     f"output ({len(t)} points), so a 50 pct to 50 pct "
                     f"delay between them is not defined"
                 )
+
+    # -- transient extras: the last sample, the record's excursion, and the
+    # oscillation frequency -- each refused rather than guessed when the
+    # record does not support it.
+    if trd:
+        t = list(trd.get("time") or [])
+        signals = trd.get("signals") or {}
+        key = _pick_output(signals, output_signal)
+        if key and t:
+            sig_t, y = _signal_xy(signals[key])
+            if len(sig_t) == len(y) and sig_t:
+                t = sig_t
+            if y:
+                put("vout_final", y[-1])
+                if "output_swing" not in m:
+                    put("output_swing", max(y) - min(y))
+            if len(y) >= 8 and len(t) == len(y):
+                mid = (max(y) + min(y)) / 2.0
+                cross = [t[i] for i in range(1, len(y))
+                         if (y[i - 1] - mid) * (y[i] - mid) < 0]
+                if len(cross) >= 4:
+                    half_periods = [b - a for a, b in zip(cross, cross[1:])]
+                    mean_hp = sum(half_periods) / len(half_periods)
+                    # A frequency is only a frequency if the period repeats:
+                    # a chirp or a settling wiggle also crosses the midline.
+                    if mean_hp > 0 and all(
+                            abs(hp - mean_hp) <= 0.35 * mean_hp
+                            for hp in half_periods):
+                        put("osc_freq", 1.0 / (2.0 * mean_hp))
+                    else:
+                        why["osc_freq"] = (
+                            f"refused: {len(cross)} midline crossings with "
+                            f"irregular spacing (half-periods vary more than "
+                            f"35 pct); this record does not repeat, so it has "
+                            f"no single oscillation frequency")
+                elif cross:
+                    why["osc_freq"] = (
+                        f"only {len(cross)} midline crossing(s) in the "
+                        f"record; at least 4 are needed to call it periodic")
 
     # -- noise ---------------------------------------------------------------
     nsd = _as_dict(noise)

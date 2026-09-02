@@ -86,6 +86,7 @@ def _load_circuits() -> list[dict]:
                              _compact_sweep(c["netlist"]), c["id"]),
                          "tool": c["tool_name"]})
     bank.append(RC_STEP)
+    bank.extend(BANK_EXTRA)
     return bank
 
 
@@ -144,6 +145,141 @@ def _compact_sweep(netlist: str) -> str:
     out = re.sub(r"(^\s*\.dc\s+\S+\s+)(\S+)\s+(\S+)\s+(\S+)\s*$", widen_dc,
                  out, flags=re.IGNORECASE | re.MULTILINE)
     return out
+
+
+# Bank extensions written for corpus v2, each verified to run and measure on
+# real ngspice before being added. They exist because the 824g forensics found
+# the corpus taught at most 2 transistors per deck (so the model garbled any
+# M-line it could not copy), zero BJT Q-lines (so bandgap attempts produced
+# pseudo-MOSFET BJTs), and no PULSE/.tran idiom (127 of 129 eval decks were
+# sim.dc).
+BANK_EXTRA = [
+    {
+        "id": "diff_pair_full",
+        "task": ("Design an NMOS differential pair with tail current source and "
+                 "PMOS mirror load; verify the differential DC transfer and "
+                 "output swing."),
+        "tool": "sim.dc",
+        "netlist": """* Differential pair, tail source, PMOS mirror load
+.model nch nmos level=1 vto=0.5 kp=200u lambda=0.03
+.model pch pmos level=1 vto=-0.5 kp=100u lambda=0.03
+VDD vdd 0 DC 1.8
+Vinp inp 0 DC 0.9
+Vinn inn 0 DC 0.9
+Vbias nbias 0 DC 0.7
+M1 d1 inp tail 0 nch W=20u L=1u
+M2 out inn tail 0 nch W=20u L=1u
+M5 tail nbias 0 0 nch W=40u L=2u
+M3 d1 d1 vdd vdd pch W=40u L=1u
+M4 out d1 vdd vdd pch W=40u L=1u
+.dc Vinp 0.6 1.2 0.01
+.save v(out) i(vdd)
+.end
+""",
+    },
+    {
+        "id": "ota_2stage_flat",
+        "task": ("Design a two-stage Miller-compensated OTA as a flat "
+                 "transistor-level deck and verify its DC transfer slope."),
+        "tool": "sim.dc",
+        "netlist": """* Two-stage OTA, flat deck, Miller cap
+.model nch nmos level=1 vto=0.5 kp=200u lambda=0.03
+.model pch pmos level=1 vto=-0.5 kp=100u lambda=0.03
+VDD vdd 0 DC 1.8
+Vinp inp 0 DC 0.9
+Vinn inn 0 DC 0.9
+Vb nbias 0 DC 0.7
+M1 d1 inn tail 0 nch W=20u L=1u
+M2 d2 inp tail 0 nch W=20u L=1u
+M5 tail nbias 0 0 nch W=40u L=2u
+M3 d1 d1 vdd vdd pch W=30u L=1u
+M4 d2 d1 vdd vdd pch W=30u L=1u
+M6 out d2 vdd vdd pch W=60u L=1u
+M7 out nbias 0 0 nch W=30u L=2u
+Cc d2 out 2p
+CL out 0 5p
+.dc Vinp 0.85 0.95 0.001
+.save v(out) i(vdd)
+.end
+""",
+    },
+    {
+        "id": "bjt_vbe_multiplier",
+        "task": ("Build a BJT VBE multiplier bias cell and characterise its "
+                 "output voltage over temperature."),
+        "tool": "sim.dc",
+        "netlist": """* VBE multiplier: Vout = VBE*(1+R1/R2), CTAT slope
+.model xnpn npn (bf=100 is=1e-15)
+VDD vdd 0 DC 3.3
+Ibias vdd out DC 200u
+Q1 out b 0 xnpn
+R1 out b 40k
+R2 b 0 40k
+.dc temp -40 125 5
+.save v(out) i(vdd)
+.end
+""",
+    },
+    {
+        "id": "bjt_current_mirror",
+        "task": ("Design a BJT current mirror and verify output current "
+                 "compliance over the output voltage sweep."),
+        "tool": "sim.dc",
+        "netlist": """* NPN current mirror, 1:1
+.model xnpn npn (bf=150 is=1e-15)
+VDD vdd 0 DC 3.3
+Iref vdd c1 DC 100u
+Q1 c1 c1 0 xnpn
+Q2 c2 c1 0 xnpn
+Vout c2 0 DC 1.0
+.dc Vout 0.2 3.0 0.05
+.save i(vout) v(c1)
+.end
+""",
+    },
+    {
+        "id": "inv_chain_tran",
+        "task": ("Verify the step response of a 3-stage CMOS inverter chain "
+                 "driving a 50 fF load: full swing and settled final value."),
+        "tool": "sim.tran",
+        "netlist": """* 3-stage CMOS inverter chain, PULSE drive
+.model nch nmos level=1 vto=0.5 kp=200u
+.model pch pmos level=1 vto=-0.5 kp=100u
+VDD vdd 0 DC 1.8
+Vin in 0 PULSE(0 1.8 1n 0.1n 0.1n 8n 16n)
+M1 n1 in vdd vdd pch W=4u L=0.5u
+M2 n1 in 0 0 nch W=2u L=0.5u
+M3 n2 n1 vdd vdd pch W=8u L=0.5u
+M4 n2 n1 0 0 nch W=4u L=0.5u
+M5 out n2 vdd vdd pch W=16u L=0.5u
+M6 out n2 0 0 nch W=8u L=0.5u
+CL out 0 50f
+.tran 0.05n 6n
+.save v(out) v(in)
+.end
+""",
+    },
+    {
+        "id": "nand2_vtc",
+        "task": ("Design a 2-input CMOS NAND gate and verify its voltage "
+                 "transfer curve switches rail to rail."),
+        "tool": "sim.dc",
+        "netlist": """* NAND2 VTC, input A swept, B held high
+.model nch nmos level=1 vto=0.5 kp=200u
+.model pch pmos level=1 vto=-0.5 kp=100u
+VDD vdd 0 DC 1.8
+Va a 0 DC 0.9
+Vb b 0 DC 1.8
+M1 out a vdd vdd pch W=4u L=0.5u
+M2 out b vdd vdd pch W=4u L=0.5u
+M3 out a mid 0 nch W=4u L=0.5u
+M4 mid b 0 0 nch W=4u L=0.5u
+.dc Va 0 1.8 0.01
+.save v(out) i(vdd)
+.end
+""",
+    },
+]
 
 
 # A transient deck that is fast BY CONSTRUCTION: single pole, 20 time
@@ -492,141 +628,336 @@ def fresh_env(specs: dict):
     return env
 
 
+PROBE_SPECS = {
+    "dc": ["max_gain", "vout_swing", "iout_max", "iout_swing", "idd",
+           "output_tc"],
+    "ac": ["gain", "bandwidth", "ugb"],
+    "tran": ["vout_final", "vout_swing", "osc_freq"],
+}
+
+
+def probe_measured(env, kind: str) -> dict[str, float]:
+    """What the ENV itself can measure from the analyses stored so far.
+
+    spec.check now scores exclusively from its own derivation (the anti-gaming
+    change), so the corpus must be built from the env's numbers, not this
+    script's. The probe call is internal -- never recorded -- and uses spec
+    names the extended spec_extract can derive.
+    """
+    probe = {n: {"min": 0.0, "unit": UNITS.get(n, "")}
+             for n in PROBE_SPECS[kind]}
+    r = env.step({"name": "spec.check",
+                  "arguments": {"results": {}, "specs": probe}})
+    try:
+        measured = json.loads(r.observation).get("measured") or {}
+    except json.JSONDecodeError:
+        return {}
+    return {k: float(v) for k, v in measured.items()
+            if isinstance(v, (int, float)) and math.isfinite(v)}
+
+
+def corrupt_line(netlist: str, rng: random.Random):
+    """Break ONE element line into the exact defect classes the 824g model
+    produced organically, so the repair patterns train on the same error
+    text the eval feeds back. Three styles, all verified to make ngspice
+    fail cleanly (no engine wedge):
+
+      R value -> bare identifier   "unknown parameter (val)"
+      M line loses its bulk node   "circuit not parsed"
+      M model name misspelled      "could not find a valid modelname"
+
+    Returns (corrupted deck, human description) or None.
+    """
+    lines = netlist.splitlines()
+    r_idx = [i for i, ln in enumerate(lines)
+             if re.match(r"^R\w+\s+\S+\s+\S+\s+\S+\s*$", ln)]
+    m_idx = [i for i, ln in enumerate(lines)
+             if re.match(r"^M\w+(\s+\S+){5,}", ln)]
+    styles = ([("rval", k) for k in r_idx]
+              + [("mnode", k) for k in m_idx]
+              + [("mmodel", k) for k in m_idx])
+    if not styles:
+        return None
+    style, k = rng.choice(styles)
+    toks = lines[k].split()
+    if style == "rval":
+        toks[-1] = "val"
+        desc = "resistor value replaced by an undefined parameter name"
+    elif style == "mnode":
+        del toks[3]                      # the bulk node
+        desc = "MOSFET line missing its bulk node"
+    else:
+        toks[5] = toks[5] + "x"
+        desc = "MOSFET references a model no .model card defines"
+    out = lines[:]
+    out[k] = " ".join(toks)
+    joined = "\n".join(out)
+    if netlist.endswith("\n"):
+        joined += "\n"
+    return joined, desc
+
+
+def rejection_obs(name: str, args: dict):
+    """The byte-exact observation the serving loop feeds back for a call that
+    fails contract validation (runner.py: json.dumps({"error": why}))."""
+    from asic_ai.inference.parser import ToolCallParser
+    parser = ToolCallParser()
+    calls = parser.parse(call_block(name, args))
+    if not calls:
+        return None
+    ok, why = parser.validate_tool_call(calls[0])
+    if ok:
+        return None
+    return json.dumps({"error": why}), why
+
+
+DIAGNOSE2 = [
+    "That fix did not take -- a different error this time: {err}. Diagnosing "
+    "again instead of repeating myself.",
+    "Second failure, new message: {err}. The previous correction was not the "
+    "whole story; changing approach.",
+    "Still failing ({err}). Repeating the same call would return the same "
+    "error, so here is a structurally different attempt.",
+]
+
+LINEFIX = [
+    "The simulator names the broken line: {err}. Rewriting that element line "
+    "with proper node connections and resimulating the corrected deck.",
+    "That is a netlist syntax error on a specific line ({err}). Fixing exactly "
+    "that line -- an '=' where a node belongs -- and rerunning.",
+]
+
+ARGFIX = [
+    "The call was rejected before reaching the simulator: {err}. Re-issuing "
+    "with every required argument present.",
+    "Contract rejection: {err}. Filling in the missing argument from context "
+    "and retrying.",
+]
+
+RAW_READS = [
+    "From the returned vectors: {raw}. Handing the checker my reading.",
+    "The run produced real data ({raw}); verifying against the targets now.",
+    "Observation in hand: {raw}. Checking the specs.",
+]
+
+
+def _raw_quote(observation: str, kind: str) -> str:
+    """One or two RAW numbers quoted verbatim from the observation, so the
+    prose the model learns cites tokens that exist in its context (the 824g
+    forensics: only 13 pct of cited values were copyable; ~3/4 of claims were
+    invented)."""
+    try:
+        d = json.loads(observation)
+    except json.JSONDecodeError:
+        return "vectors returned"
+    pool = d.get("sweeps") or d.get("signals") or {}
+    for name, sig in pool.items():
+        y = (sig or {}).get("y_values") or []
+        if len(y) >= 2 and all(isinstance(v, (int, float)) for v in y[:2]):
+            return f"{name} runs {y[0]:g} to {y[-1]:g}"
+    return "vectors returned"
+
+
 def gen_one(circuit: dict, rng: random.Random, pattern: str) -> dict | None:
     """One executed trajectory, or None when the variant does not simulate.
 
-    One env, one real run per sim call in the trajectory. The spec targets
-    are derived from the measurement, so the sim runs FIRST and the messages
-    are assembled afterwards from the recorded observations -- every tool
-    message below is a string env.step() actually returned.
+    Patterns (each observation is a string env.step()/the parser actually
+    returned; a variant the simulator rejects is dropped, never patched):
+
+      direct     sim -> raw-quoting prose -> spec.check verdict
+      recovery   one real error -> corrected call -> verdict
+      recovery2  TWO different real errors -> explicit rediagnosis -> success
+                 (the state "my fix failed" had zero corpus coverage and 43
+                 stuck-call groups in the 824g eval)
+      linefix    a corrupted element line -> "Error on line N" -> that line
+                 fixed -> success
+      argfix     spec.check missing a required argument -> the serving loop's
+                 byte-exact rejection -> completed call
+      iterate    verdict fails -> devices widened -> re-simulated -> re-checked
     """
     kind = circuit["tool"].split(".")[1]
     deck = perturb(circuit["netlist"], rng)
     stripped, card_kind, card_params = split_card(deck)
 
-    # Two calling conventions, both real: the deck with its card, or the
-    # stripped deck plus the contract's parameter names.
-    use_params = card_params is not None and rng.random() < 0.5
+    use_params = card_params is not None and rng.random() < 0.4
     sim_args: dict = {"netlist": stripped if use_params else deck}
     if use_params:
         sim_args.update(card_params)
 
     env = fresh_env({})
-
-    # -- run everything first ---------------------------------------------
-    bad_args, bad_obs = None, None
-    if pattern == "recovery":
-        # A deliberate, common mistake -- then the env's REAL error text, then
-        # the corrected call. The error string in the corpus is the error
-        # string the model will see at eval time, byte for byte.
-        if kind == "dc" or (use_params and rng.random() < 0.5):
-            # A stripped dc deck still runs .op successfully, so the only
-            # dc mistake that honestly FAILS is omitting the netlist.
-            bad_args = {k: v for k, v in sim_args.items() if k != "netlist"}
-        else:
-            bad_args = {"netlist": stripped} if card_kind else \
-                       {k: v for k, v in sim_args.items() if k != "netlist"}
-        bad = env.step({"name": circuit["tool"], "arguments": bad_args})
-        if '"error"' not in bad.observation:
-            return None                   # not actually a failing call; drop
-        bad_obs = bad.observation
-
-    sweep_var = (card_params or {}).get("sweep_var")
-    r1 = env.step({"name": circuit["tool"], "arguments": dict(sim_args)})
-    obs1 = r1.observation
-    vals1 = measure(kind, obs1, sweep_var)
-    if not vals1:
-        return None                       # variant did not produce usable data
-
-    meet = pattern != "iterate"
-    specs = make_specs(vals1, rng, meet=meet)
-    if not specs:
-        return None
-
-    # spec.check runs in an env RESET WITH these specs: the env scores through
-    # the RewardFunction built at reset time, so an env reset with {} scores
-    # everything 0.0 no matter what the call's specs argument says. With
-    # explicit results= no simulation happens, so this env is cheap.
-    check_env = fresh_env(specs)
-    check1 = check_env.step({"name": "spec.check",
-                             "arguments": {"results": vals1, "specs": specs}})
-    verdict1 = json.loads(check1.observation)
-    if pattern == "iterate" and verdict1.get("passed"):
-        return None                       # meant to fail first; it did not
-    if pattern != "iterate" and not verdict1.get("passed"):
-        return None                       # meant to pass; the env disagreed
-
-    pdk_step = None
-    if pattern == "direct" and rng.random() < 0.25:
-        # A quarter of the direct examples open with a PDK enquiry -- the two
-        # catalogue tools the rest of the corpus never demonstrates.
-        pdk_tool = rng.choice(["pdk.list_devices", "pdk.get_corners"])
-        pdk_step = (pdk_tool,
-                    env.step({"name": pdk_tool, "arguments": {}}).observation)
-
-    # -- assemble the messages --------------------------------------------
-    msgs = [{"role": "system", "content": build_system_message()},
-            {"role": "user",
-             "content": f"{circuit['task']} Specs: {json.dumps(specs)}"}]
+    pre: list[dict] = []          # messages before the successful sim call
     analysis_name = {"dc": "a DC analysis", "ac": "an AC analysis",
                      "tran": "a transient analysis"}[kind]
     opener = rng.choice(OPENERS).format(analysis=analysis_name)
 
-    if pdk_step:
-        pdk_tool, pdk_obs = pdk_step
+    # -- pattern-specific faulty prefix, all faults real ---------------------
+    if pattern == "recovery":
+        if kind == "dc" or not card_kind or rng.random() < 0.5:
+            bad_args = {k: v for k, v in sim_args.items() if k != "netlist"}
+        else:
+            bad_args = {"netlist": stripped}
+        bad = env.step({"name": circuit["tool"], "arguments": bad_args})
+        if '"error"' not in bad.observation:
+            return None
+        err = json.loads(bad.observation).get("error", "")[:140].rstrip(".")
+        pre += [
+            {"role": "assistant",
+             "content": opener + "\n\n" + call_block(circuit["tool"], bad_args)},
+            obs_msg(bad.observation),
+            {"role": "assistant",
+             "content": rng.choice(RECOVER).format(err=err) + "\n\n"
+                        + call_block(circuit["tool"], sim_args)},
+        ]
+    elif pattern == "recovery2":
+        bad1_args = {k: v for k, v in sim_args.items() if k != "netlist"}
+        bad1 = env.step({"name": circuit["tool"], "arguments": bad1_args})
+        if '"error"' not in bad1.observation:
+            return None
+        if card_kind in ("ac", "tran") and card_params:
+            bad2_args = {"netlist": stripped}
+        else:
+            corrupted = corrupt_line(deck, rng)
+            if corrupted is None:
+                return None
+            bad2_args = dict(sim_args, netlist=corrupted[0])
+        bad2 = env.step({"name": circuit["tool"], "arguments": bad2_args})
+        if '"error"' not in bad2.observation:
+            return None
+        err1 = json.loads(bad1.observation).get("error", "")[:120].rstrip(".")
+        err2 = json.loads(bad2.observation).get("error", "")[:140].rstrip(".")
+        pre += [
+            {"role": "assistant",
+             "content": opener + "\n\n" + call_block(circuit["tool"], bad1_args)},
+            obs_msg(bad1.observation),
+            {"role": "assistant",
+             "content": rng.choice(RECOVER).format(err=err1) + "\n\n"
+                        + call_block(circuit["tool"], bad2_args)},
+            obs_msg(bad2.observation),
+            {"role": "assistant",
+             "content": rng.choice(DIAGNOSE2).format(err=err2) + "\n\n"
+                        + call_block(circuit["tool"], sim_args)},
+        ]
+    elif pattern == "linefix":
+        corrupted = corrupt_line(deck, rng)
+        if corrupted is None:
+            return None
+        bad_args = dict(sim_args, netlist=corrupted[0])
+        bad = env.step({"name": circuit["tool"], "arguments": bad_args})
+        if '"error"' not in bad.observation:
+            return None
+        err = json.loads(bad.observation).get("error", "")[:140].rstrip(".")
+        pre += [
+            {"role": "assistant",
+             "content": opener + "\n\n" + call_block(circuit["tool"], bad_args)},
+            obs_msg(bad.observation),
+            {"role": "assistant",
+             "content": rng.choice(LINEFIX).format(err=err) + "\n\n"
+                        + call_block(circuit["tool"], sim_args)},
+        ]
+    else:
+        pre.append({"role": "assistant",
+                    "content": opener + "\n\n"
+                               + call_block(circuit["tool"], sim_args)})
+
+    # -- the successful sim, then env-derived specs --------------------------
+    r1 = env.step({"name": circuit["tool"], "arguments": dict(sim_args)})
+    if '"error"' in r1.observation[:80]:
+        return None
+    obs1 = r1.observation
+    env_measured = probe_measured(env, kind)
+    env_measured = {k: v for k, v in env_measured.items()
+                    if v > 0 or k == "output_tc"}
+    if not env_measured:
+        return None
+
+    meet = pattern != "iterate"
+    specs = make_specs(env_measured, rng, meet=meet)
+    if not specs:
+        return None
+    claims = {k: env_measured[k] for k in specs}
+
+    check1 = env.step({"name": "spec.check",
+                       "arguments": {"results": claims, "specs": specs}})
+    verdict1 = json.loads(check1.observation)
+    if pattern == "iterate" and verdict1.get("passed"):
+        return None
+    if pattern != "iterate" and not verdict1.get("passed"):
+        return None
+
+    read = rng.choice(RAW_READS).format(raw=_raw_quote(obs1, kind))
+
+    msgs = [{"role": "system", "content": build_system_message()},
+            {"role": "user",
+             "content": f"{circuit['task']} Specs: {json.dumps(specs)}"}]
+
+    if pattern == "direct" and rng.random() < 0.2:
+        pdk_tool = rng.choice(["pdk.list_devices", "pdk.get_corners"])
+        pdk_obs = env.step({"name": pdk_tool, "arguments": {}})
         lead = ("Checking what the PDK offers before simulating."
                 if pdk_tool == "pdk.list_devices" else
                 "Noting the available corners before the nominal run.")
         msgs += [{"role": "assistant",
                   "content": lead + "\n\n" + call_block(pdk_tool, {})},
-                 obs_msg(pdk_obs)]
+                 obs_msg(pdk_obs.observation)]
 
-    if pattern == "recovery":
-        err = json.loads(bad_obs).get("error", "")[:140].rstrip(".")
+    msgs += pre
+    msgs.append(obs_msg(obs1))
+
+    if pattern == "argfix":
+        bad_call_args = {"results": claims}          # 'specs' missing
+        rej = rejection_obs("spec.check", bad_call_args)
+        if rej is None:
+            return None
+        rej_obs, why = rej
         msgs += [
             {"role": "assistant",
-             "content": opener + "\n\n" + call_block(circuit["tool"], bad_args)},
-            obs_msg(bad_obs),
+             "content": read + "\n\n" + call_block("spec.check",
+                                                   bad_call_args)},
+            obs_msg(rej_obs),
             {"role": "assistant",
-             "content": rng.choice(RECOVER).format(err=err) + "\n\n"
-                        + call_block(circuit["tool"], sim_args)},
+             "content": rng.choice(ARGFIX).format(err=why[:120].rstrip("."))
+                        + "\n\n" + call_block("spec.check",
+                                              {"results": claims,
+                                               "specs": specs})},
+            obs_msg(check1.observation),
         ]
     else:
-        msgs.append({"role": "assistant",
-                     "content": opener + "\n\n"
-                                + call_block(circuit["tool"], sim_args)})
-
-    msgs += [
-        obs_msg(obs1),
-        {"role": "assistant",
-         "content": rng.choice(READS).format(vals=fmt_vals(vals1))
-                    + "\n\n" + call_block("spec.check",
-                                          {"results": vals1, "specs": specs})},
-        obs_msg(check1.observation),
-    ]
+        msgs += [
+            {"role": "assistant",
+             "content": read + "\n\n" + call_block("spec.check",
+                                                   {"results": claims,
+                                                    "specs": specs})},
+            obs_msg(check1.observation),
+        ]
 
     if pattern == "iterate":
         better = strengthen(stripped if use_params else deck, rng)
         args2 = dict(sim_args, netlist=better)
         r2 = env.step({"name": circuit["tool"], "arguments": dict(args2)})
-        vals2 = measure(kind, r2.observation, sweep_var)
-        if not vals2:
+        if '"error"' in r2.observation[:80]:
             return None
-        check2 = check_env.step({"name": "spec.check",
-                                 "arguments": {"results": vals2, "specs": specs}})
+        measured2 = probe_measured(env, kind)
+        claims2 = {k: measured2[k] for k in specs if k in measured2}
+        if not claims2:
+            return None
+        check2 = env.step({"name": "spec.check",
+                           "arguments": {"results": claims2, "specs": specs}})
         verdict2 = json.loads(check2.observation)
         shortfall = [k for k in specs
-                     if k in vals2 and not _meets(specs[k], vals2[k])]
+                     if k in measured2 and not _meets(specs[k], measured2[k])]
         msgs += [
             {"role": "assistant",
-             "content": "Below target. Widening the devices and re-simulating "
-                        "the modified deck.\n\n"
+             "content": "Below target. The same sweep again would return the "
+                        "same numbers; widening the devices and re-simulating "
+                        "the MODIFIED deck instead.\n\n"
                         + call_block(circuit["tool"], args2)},
             obs_msg(r2.observation),
             {"role": "assistant",
-             "content": rng.choice(READS).format(vals=fmt_vals(vals2))
+             "content": rng.choice(RAW_READS).format(
+                            raw=_raw_quote(r2.observation, kind))
                         + "\n\n" + call_block("spec.check",
-                                              {"results": vals2, "specs": specs})},
+                                              {"results": claims2,
+                                               "specs": specs})},
             obs_msg(check2.observation),
             {"role": "assistant",
              "content": rng.choice(CONCLUDE_ITER) if verdict2.get("passed")
@@ -648,7 +979,7 @@ def gen_one(circuit: dict, rng: random.Random, pattern: str) -> dict | None:
         "messages": msgs,
         "score": round(float(verdict1.get("score", 0.0)), 4),
         "success": success,
-        "source": "grounded_v1",
+        "source": "grounded_v2",
         "pattern": pattern,
     }
 
@@ -681,7 +1012,8 @@ def main() -> int:
     print(f"\n{SEP}\n  Grounded SFT generation: {len(bank)} runnable circuits, "
           f"target {args.per_circuit}/circuit\n{SEP}")
 
-    patterns = ["direct"] * 5 + ["recovery"] * 3 + ["iterate"] * 2
+    patterns = (["direct"] * 3 + ["recovery"] * 2 + ["recovery2"] * 2
+                + ["linefix"] + ["argfix"] + ["iterate"])
     examples, dropped = [], 0
     for circuit in bank:
         made = 0
