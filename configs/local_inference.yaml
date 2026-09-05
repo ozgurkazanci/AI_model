@@ -51,7 +51,7 @@ server:
 
 models:
   # Produced by: merge_lora.py -> convert_hf_to_gguf.py -> llama-quantize.exe
-  default: "models/gguf/asic-ai-0.5b-945ex-q8_0.gguf"
+  default: "models/gguf/asic-ai-0.5b-824g-q8_0.gguf"
   f16: "models/gguf/asic-ai-0.5b-f16.gguf"
 
 inference:

@@ -809,30 +809,40 @@ def gen_one(circuit: dict, rng: random.Random, pattern: str) -> dict | None:
                         + call_block(circuit["tool"], sim_args)},
         ]
     elif pattern == "recovery2":
+        # Two faults, NEITHER of them a broken netlist. v2 made the second
+        # fault a corrupted deck, which put a malformed netlist inside a tool
+        # call in 29 pct of the corpus -- and the 946v2 eval then wrote decks
+        # ngspice rejected in 88 pct of its sim calls (824g: 73 pct), with
+        # stub netlists up 22 -> 125. A 0.5B model imitates the shape it sees
+        # most, so a deliberately broken deck must stay rare: it now appears
+        # only in `linefix`, at roughly 8 pct of the mix.
+        #
+        # The lesson here is the RECOVERY POLICY, not the defect: the first
+        # call omits the netlist, the "fix" then omits a required argument on
+        # a different tool, and only the third call is right. Every deck shown
+        # is well-formed.
         bad1_args = {k: v for k, v in sim_args.items() if k != "netlist"}
         bad1 = env.step({"name": circuit["tool"], "arguments": bad1_args})
         if '"error"' not in bad1.observation:
             return None
-        if card_kind in ("ac", "tran") and card_params:
-            bad2_args = {"netlist": stripped}
-        else:
-            corrupted = corrupt_line(deck, rng)
-            if corrupted is None:
-                return None
-            bad2_args = dict(sim_args, netlist=corrupted[0])
-        bad2 = env.step({"name": circuit["tool"], "arguments": bad2_args})
-        if '"error"' not in bad2.observation:
+        second_name, second_args = rng.choice(
+            [("meas.eval", {"expression": "max"}),
+             ("spec.check", {"results": {}}),
+             ("sim.stb", {"netlist": deck})])
+        rej = rejection_obs(second_name, second_args)
+        if rej is None:
             return None
+        bad2_obs, why2 = rej
         err1 = json.loads(bad1.observation).get("error", "")[:120].rstrip(".")
-        err2 = json.loads(bad2.observation).get("error", "")[:140].rstrip(".")
+        err2 = why2[:140].rstrip(".")
         pre += [
             {"role": "assistant",
              "content": opener + "\n\n" + call_block(circuit["tool"], bad1_args)},
             obs_msg(bad1.observation),
             {"role": "assistant",
              "content": rng.choice(RECOVER).format(err=err1) + "\n\n"
-                        + call_block(circuit["tool"], bad2_args)},
-            obs_msg(bad2.observation),
+                        + call_block(second_name, second_args)},
+            obs_msg(bad2_obs),
             {"role": "assistant",
              "content": rng.choice(DIAGNOSE2).format(err=err2) + "\n\n"
                         + call_block(circuit["tool"], sim_args)},
@@ -1012,8 +1022,11 @@ def main() -> int:
     print(f"\n{SEP}\n  Grounded SFT generation: {len(bank)} runnable circuits, "
           f"target {args.per_circuit}/circuit\n{SEP}")
 
-    patterns = (["direct"] * 3 + ["recovery"] * 2 + ["recovery2"] * 2
-                + ["linefix"] + ["argfix"] + ["iterate"])
+    # Weights follow the 946v2 regression: a deliberately corrupted deck now
+    # appears ONLY in linefix, at ~8 pct (v2: 29 pct across linefix +
+    # recovery2). Every other pattern shows well-formed netlists.
+    patterns = (["direct"] * 8 + ["recovery"] * 5 + ["argfix"] * 4
+                + ["iterate"] * 4 + ["recovery2"] * 2 + ["linefix"] * 2)
     examples, dropped = [], 0
     for circuit in bank:
         made = 0
