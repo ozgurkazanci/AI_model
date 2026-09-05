@@ -70,8 +70,24 @@ def profile(run: Dict[str, Any]) -> Dict[str, Any]:
             if t.get("parse_errors"):
                 parse_error_turns += 1
             for o in (t.get("observations") or []):
-                if '"measured"' in o and '"measured": {}' not in o.replace(" ", ""):
-                    measured_checks += 1
+                # Count VALUES actually measured, by parsing. The old check was
+                #     '"measured"' in o and '"measured": {}' not in o.replace(" ", "")
+                # whose second clause is always true: stripping the spaces turns
+                # the observation's `"measured": {}` into `"measured":{}`, which
+                # the spaced needle can never match. So every spec.check
+                # observation counted, empty ones included -- the metric read
+                # "spec.check was called", not "something was measured", and it
+                # reported 103 measurements for a run whose real count was far
+                # lower. Exactly the shape this repo keeps finding: a check that
+                # cannot fail.
+                try:
+                    payload = json.loads(o)
+                except (json.JSONDecodeError, TypeError):
+                    continue
+                if isinstance(payload, dict):
+                    vals = payload.get("measured")
+                    if isinstance(vals, dict) and vals:
+                        measured_checks += len(vals)
         # Stuck: every step made the same call(s) and there were several steps.
         non_empty = [s for s in sigs if s]
         if len(non_empty) >= 3 and len(set(non_empty)) == 1:
