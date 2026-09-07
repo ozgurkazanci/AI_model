@@ -43,6 +43,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from asic_ai.data.format import build_system_message, validate_sft_format
+from asic_ai.inference.runner import OBSERVATION_CHARS
 
 SEP = "=" * 70
 
@@ -97,19 +98,25 @@ def _load_circuits() -> list[dict]:
 # Saving the 1-3 informative vectors keeps the whole observation readable
 # inside the serving loop's 4000-char cut -- and teaches the model to write
 # .save lines itself.
+# ONE vector per deck. Two vectors doubled every observation, and the v4
+# measurement found the iterate pattern -- the only one that teaches changing
+# the deck instead of repeating the call -- rejected by the length gate in 36
+# of 42 attempts, all of them just over the 4096-token window. The dropped
+# vector costs a spec or two per task (idd is the usual casualty); the specs
+# are derived from what is measurable, so the task simply declares fewer.
 SAVES = {
-    "cs_amp_sizing": "v(out) i(vdd)",
+    "cs_amp_sizing": "v(out)",
     "inv_vtc": "v(out)",
     "rc_bw_check": "v(out)",
-    "diff_pair_offset": "v(outp) v(outn)",
-    "bandgap_temp": "v(col1) v(col2)",
-    "current_mirror": "i(vds) v(drain2)",
-    "cascode_cs": "v(out) i(vdd)",
-    "source_follower": "v(out) i(vdd)",
-    "pmos_cs_load": "v(out) i(vdd)",
+    "diff_pair_offset": "v(outp)",
+    "bandgap_temp": "v(col1)",
+    "current_mirror": "i(vds)",
+    "cascode_cs": "v(out)",
+    "source_follower": "v(out)",
+    "pmos_cs_load": "v(out)",
     "rc_integrator": "v(out)",
-    "widlar_mirror": "i(vds) v(drain1)",
-    "voltage_divider_precision": "v(out) i(vdd)",
+    "widlar_mirror": "i(vds)",
+    "voltage_divider_precision": "v(out)",
 }
 
 
@@ -127,17 +134,24 @@ def _compact_sweep(netlist: str) -> str:
     truncation the serving loop applies (runner.py cuts every tool message at
     observation[:4000]). A 20-points-per-decade AC sweep serialises to ~15 KB
     -- the model would be trained to read vectors it can never see whole at
-    eval time. 6 points/decade and <=40 DC steps keep the physics (the -3 dB
-    crossing and the sweep slope survive) and the whole vector visible."""
+    eval time. 4 points/decade and <=20 DC steps keep the physics (the -3 dB
+    crossing and the sweep slope survive) and the whole vector visible.
+
+    Halved again for v4: the v3 measurement found tool observations eating
+    52 pct of every example's tokens (2394 of ~3900), which pushed 30 pct of
+    the corpus past max_seq_len 4096 -- against 18 pct in the 824g corpus
+    that still holds the best eval. Truncation removes the END of a
+    multi-turn example, i.e. the corrected full-deck call, so the model
+    learns openings and faults but not completions."""
     def thin_ac(m):
-        return f"{m.group(1)}6{m.group(3)}"
+        return f"{m.group(1)}4{m.group(3)}"
 
     out = re.sub(r"(^\s*\.ac\s+dec\s+)(\d+)(\s)", thin_ac, netlist,
                  flags=re.IGNORECASE | re.MULTILINE)
 
     def widen_dc(m):
         head, start, stop, step = m.group(1), _num(m.group(2)), _num(m.group(3)), _num(m.group(4))
-        min_step = abs(stop - start) / 40.0
+        min_step = abs(stop - start) / 20.0
         if step >= min_step:
             return m.group(0)
         return f"{head}{m.group(2)} {m.group(3)} {min_step:g}"
@@ -173,7 +187,7 @@ M5 tail nbias 0 0 nch W=40u L=2u
 M3 d1 d1 vdd vdd pch W=40u L=1u
 M4 out d1 vdd vdd pch W=40u L=1u
 .dc Vinp 0.6 1.2 0.01
-.save v(out) i(vdd)
+.save v(out)
 .end
 """,
     },
@@ -199,7 +213,7 @@ M7 out nbias 0 0 nch W=30u L=2u
 Cc d2 out 2p
 CL out 0 5p
 .dc Vinp 0.85 0.95 0.001
-.save v(out) i(vdd)
+.save v(out)
 .end
 """,
     },
@@ -216,7 +230,7 @@ Q1 out b 0 xnpn
 R1 out b 40k
 R2 b 0 40k
 .dc temp -40 125 5
-.save v(out) i(vdd)
+.save v(out)
 .end
 """,
     },
@@ -233,7 +247,7 @@ Q1 c1 c1 0 xnpn
 Q2 c2 c1 0 xnpn
 Vout c2 0 DC 1.0
 .dc Vout 0.2 3.0 0.05
-.save i(vout) v(c1)
+.save i(vout)
 .end
 """,
     },
@@ -255,7 +269,7 @@ M5 out n2 vdd vdd pch W=16u L=0.5u
 M6 out n2 0 0 nch W=8u L=0.5u
 CL out 0 50f
 .tran 0.05n 6n
-.save v(out) v(in)
+.save v(out)
 .end
 """,
     },
@@ -275,7 +289,7 @@ M2 out b vdd vdd pch W=4u L=0.5u
 M3 out a mid 0 nch W=4u L=0.5u
 M4 mid b 0 0 nch W=4u L=0.5u
 .dc Va 0 1.8 0.01
-.save v(out) i(vdd)
+.save v(out)
 .end
 """,
     },
@@ -297,7 +311,7 @@ RC_STEP = {
         "R1 in out 1k\n"
         "C1 out 0 1n\n"
         ".tran 0.2u 20u\n"
-        ".save v(out) v(in)\n"
+        ".save v(out)\n"
         ".end\n"
     ),
 }
@@ -607,9 +621,9 @@ def call_block(name: str, args: dict) -> str:
 
 def obs_msg(observation: str) -> dict:
     """A tool message EXACTLY as the serving loop would deliver it: the shared
-    agent loop appends observation[:4000] (runner.py line 180), so training
+    agent loop appends observation[:OBSERVATION_CHARS], so training
     must show the model the same truncated view it will read at eval time."""
-    return {"role": "tool", "content": observation[:4000]}
+    return {"role": "tool", "content": observation[:OBSERVATION_CHARS]}
 
 
 # -------------------------------------------------------------- generation ---
@@ -756,6 +770,32 @@ def _raw_quote(observation: str, kind: str) -> str:
         if len(y) >= 2 and all(isinstance(v, (int, float)) for v in y[:2]):
             return f"{name} runs {y[0]:g} to {y[-1]:g}"
     return "vectors returned"
+
+
+_TOKENIZER = None
+MAX_TRAIN_TOKENS = 4096
+
+
+def _fits(messages) -> bool:
+    """True when the example fits the training window WHOLE.
+
+    Truncation is not a neutral shortening: it removes the END of a
+    trajectory, which in every multi-turn pattern is the corrected full-deck
+    call and the verdict. The 926v3 model was trained on a corpus 30 pct of
+    which was cut that way and emitted 320 stub netlists against the 824g
+    model's 22. So an example that would be cut is not written at all, and
+    the caller simply tries another variant -- which keeps the PATTERN MIX
+    balanced instead of silently deleting whichever pattern is longest
+    (dropping over-length examples after the fact cost 83 of 114 iterate
+    examples, the one pattern that teaches changing the deck instead of
+    repeating the call).
+    """
+    global _TOKENIZER
+    if _TOKENIZER is None:
+        from transformers import AutoTokenizer
+        _TOKENIZER = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-0.5B-Instruct")
+    text = _TOKENIZER.apply_chat_template(messages, tokenize=False)
+    return len(_TOKENIZER(text)["input_ids"]) <= MAX_TRAIN_TOKENS
 
 
 def gen_one(circuit: dict, rng: random.Random, pattern: str) -> dict | None:
@@ -941,6 +981,17 @@ def gen_one(circuit: dict, rng: random.Random, pattern: str) -> dict | None:
         ]
 
     if pattern == "iterate":
+        # Three observations, not four. The v4 measurement found the old
+        # four-observation shape (sim, verdict, sim, verdict) pushed almost
+        # every iterate example past max_seq_len 4096, so dropping the
+        # over-length examples deleted 89 of 117 of them -- gutting the one
+        # pattern that teaches "change the deck instead of repeating the
+        # call", against 27-31 stuck tasks in the last two evals.
+        #
+        # The first verdict is replaced by the assistant READING the raw
+        # numbers and naming the shortfall itself, which is the same lesson
+        # one step earlier: the decision to resize comes from the measurement,
+        # not from a checker's verdict.
         better = strengthen(stripped if use_params else deck, rng)
         args2 = dict(sim_args, netlist=better)
         r2 = env.step({"name": circuit["tool"], "arguments": dict(args2)})
@@ -955,12 +1006,17 @@ def gen_one(circuit: dict, rng: random.Random, pattern: str) -> dict | None:
         verdict2 = json.loads(check2.observation)
         shortfall = [k for k in specs
                      if k in measured2 and not _meets(specs[k], measured2[k])]
+        short1 = [k for k in specs
+                  if k in env_measured and not _meets(specs[k], env_measured[k])]
         msgs += [
             {"role": "assistant",
-             "content": "Below target. The same sweep again would return the "
-                        "same numbers; widening the devices and re-simulating "
-                        "the MODIFIED deck instead.\n\n"
-                        + call_block(circuit["tool"], args2)},
+             "content": ("Reading the run: " + fmt_vals(claims)
+                         + ". That is below target on "
+                         + (", ".join(short1) or "the spec")
+                         + ". Re-running the same sweep would return the same "
+                         "numbers, so I am widening the devices and "
+                         "simulating the MODIFIED deck.\n\n"
+                         + call_block(circuit["tool"], args2))},
             obs_msg(r2.observation),
             {"role": "assistant",
              "content": rng.choice(RAW_READS).format(
@@ -983,6 +1039,8 @@ def gen_one(circuit: dict, rng: random.Random, pattern: str) -> dict | None:
     ok, errors = validate_sft_format(msgs)
     if not ok:
         raise RuntimeError(f"generated an invalid example: {errors}")
+    if not _fits(msgs):
+        return None          # would be truncated; try another variant instead
     return {
         "id": f"grounded_{circuit['id']}_{rng.randrange(16**6):06x}",
         "task_id": circuit["id"],
@@ -1027,13 +1085,25 @@ def main() -> int:
     # recovery2). Every other pattern shows well-formed netlists.
     patterns = (["direct"] * 8 + ["recovery"] * 5 + ["argfix"] * 4
                 + ["iterate"] * 4 + ["recovery2"] * 2 + ["linefix"] * 2)
+    # An iterate trajectory carries the deck TWICE (original and widened), so
+    # on the long BANK_EXTRA decks it cannot fit the 4096-token window and the
+    # length gate rejects every attempt -- which silently starved the one
+    # pattern that teaches changing the deck instead of repeating the call
+    # (16 examples of 798). The lesson does not depend on the topology, so it
+    # is drawn from the SHORT decks, where it fits, and those decks get a
+    # correspondingly larger share of it.
+    long_deck_patterns = [p for p in patterns if p != "iterate"]
+    iterate_heavy = patterns + ["iterate"] * 6
     examples, dropped = [], 0
     for circuit in bank:
         made = 0
         attempts = 0
         while made < args.per_circuit and attempts < args.per_circuit * 4:
             attempts += 1
-            pattern = rng.choice(patterns)
+            deck_lines = circuit["netlist"].count(chr(10))
+            pool = (iterate_heavy if deck_lines <= 12
+                    else long_deck_patterns)
+            pattern = rng.choice(pool)
             try:
                 ex = gen_one(circuit, rng, pattern)
             except Exception as exc:

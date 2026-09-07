@@ -28,6 +28,10 @@ from typing import Any, Callable, Dict, List, Optional
 
 MAX_STEPS = 8
 
+# The shared truncation, imported so the desktop app shows the model exactly
+# what training and eval show it.
+from asic_ai.inference.runner import OBSERVATION_CHARS
+
 
 def _model_provenance(model_path: str) -> Optional[Dict[str, Any]]:
     """The MODEL_INFO.json scripts/rebuild_gguf.py writes next to a GGUF.
@@ -202,9 +206,9 @@ class DesignSession:
                                                  "arguments": call.arguments})
                         observation = result.observation
                     self._emit("tool_result", {"name": call.name,
-                                               "observation": observation[:4000]})
+                                               "observation": observation[:OBSERVATION_CHARS]})
                     self._messages.append({"role": "tool",
-                                           "content": observation[:4000]})
+                                           "content": observation[:OBSERVATION_CHARS]})
 
             self._emit("done", {"reason": "max_steps"})
         except Exception as exc:

@@ -36,6 +36,22 @@ from asic_ai.inference.parser import ToolCallParser
 
 log = logging.getLogger(__name__)
 
+# How much of a tool result the model is shown. This is ONE number on purpose:
+# scripts/generate_grounded_sft.py imports it so the corpus is truncated
+# exactly as serving truncates, and a mismatch here trains the model to read
+# vectors it will never receive whole.
+#
+# Lowered 4000 -> 1500 on 2026-09-07. At 4000 the observations were 52 pct of
+# every training example's tokens (2394 of ~3900), which pushed 30 pct of the
+# corpus past max_seq_len 4096 -- against 18 pct in the 824g corpus that still
+# holds the best eval. Truncation cuts the END of a multi-turn example, i.e.
+# the corrected full-deck call, and the 926v3 model duly emitted 320 stub
+# netlists against 824g's 22. 1500 chars still carries a 20-point sweep of
+# two vectors; what it drops is the tail of a vector a 0.5B model was not
+# reading anyway.
+OBSERVATION_CHARS = 1500
+
+
 __all__ = [
     "InferenceConfig", "InferenceResult", "EvalReport", "InferenceRunner",
     "SimulatorAdapter", "run_agent_loop",
@@ -177,7 +193,8 @@ def run_agent_loop(task: Dict[str, Any],
                                          if isinstance(v, (int, float))}
                         except (json.JSONDecodeError, TypeError, ValueError):
                             pass
-                messages.append({"role": "tool", "content": observation[:4000]})
+                messages.append({"role": "tool",
+                                 "content": observation[:OBSERVATION_CHARS]})
                 record.setdefault("observations", []).append(observation[:1000])
 
             steps = step + 1
