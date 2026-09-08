@@ -59,6 +59,8 @@ def main() -> int:
     ap.add_argument("--quant", default="Q4_K_M")
     ap.add_argument("--keep-f16", action="store_true",
                     help="keep the intermediate f16 GGUF")
+    ap.add_argument("--keep-merged", action="store_true",
+                    help="keep the 1.9 GB intermediate merged HF model")
     ap.add_argument("--set-default", action="store_true",
                     help="point configs/local_inference.yaml models.default at the result")
     args = ap.parse_args()
@@ -139,6 +141,16 @@ def main() -> int:
 
     if not args.keep_f16:
         f16.unlink(missing_ok=True)
+
+    # The merged HF model is a 1.9 GB intermediate that only exists to be
+    # converted. Six of them accumulated unnoticed and took C: down to 8.7 GB
+    # free, at which point training hung for 2h44m trying to write its first
+    # checkpoint. Delete it unless asked to keep it; it is reproducible from
+    # the adapter in one command.
+    if not args.keep_merged:
+        import shutil
+        shutil.rmtree(merged, ignore_errors=True)
+        print(f"  removed intermediate {merged.name} (--keep-merged to retain)")
 
     if args.set_default:
         import re
