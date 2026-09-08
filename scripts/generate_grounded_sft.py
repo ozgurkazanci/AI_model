@@ -98,25 +98,29 @@ def _load_circuits() -> list[dict]:
 # Saving the 1-3 informative vectors keeps the whole observation readable
 # inside the serving loop's 4000-char cut -- and teaches the model to write
 # .save lines itself.
-# ONE vector per deck. Two vectors doubled every observation, and the v4
-# measurement found the iterate pattern -- the only one that teaches changing
-# the deck instead of repeating the call -- rejected by the length gate in 36
-# of 42 attempts, all of them just over the 4096-token window. The dropped
-# vector costs a spec or two per task (idd is the usual casualty); the specs
-# are derived from what is measurable, so the task simply declares fewer.
+# An output vector AND the supply current, wherever a supply current exists.
+#
+# v4 cut this to one vector to buy tokens, and the measurement showed exactly
+# what that bought: the model learned to write ".save v(out)" (268 times in
+# the 77-task eval, against 824g's ".save v(out) i(vdd)" 296 times), idd
+# became the most common unmeasurable spec (91 occurrences), and derived
+# measurements collapsed from 238 to 2. The model simulated well and then had
+# nothing to check. The tokens are recovered from sweep density instead --
+# the analyses now run at 4 points/decade and <=20 dc steps -- and the length
+# gate keeps any example that still does not fit out of the corpus.
 SAVES = {
-    "cs_amp_sizing": "v(out)",
-    "inv_vtc": "v(out)",
+    "cs_amp_sizing": "v(out) i(vdd)",
+    "inv_vtc": "v(out) i(vdd)",
     "rc_bw_check": "v(out)",
-    "diff_pair_offset": "v(outp)",
-    "bandgap_temp": "v(col1)",
-    "current_mirror": "i(vds)",
-    "cascode_cs": "v(out)",
-    "source_follower": "v(out)",
-    "pmos_cs_load": "v(out)",
+    "diff_pair_offset": "v(outp) i(vdd)",
+    "bandgap_temp": "v(col1) i(vdd)",
+    "current_mirror": "i(vds) i(vdd)",
+    "cascode_cs": "v(out) i(vdd)",
+    "source_follower": "v(out) i(vdd)",
+    "pmos_cs_load": "v(out) i(vdd)",
     "rc_integrator": "v(out)",
-    "widlar_mirror": "i(vds)",
-    "voltage_divider_precision": "v(out)",
+    "widlar_mirror": "i(vds) i(vdd)",
+    "voltage_divider_precision": "v(out) i(vdd)",
 }
 
 
@@ -134,7 +138,7 @@ def _compact_sweep(netlist: str) -> str:
     truncation the serving loop applies (runner.py cuts every tool message at
     observation[:4000]). A 20-points-per-decade AC sweep serialises to ~15 KB
     -- the model would be trained to read vectors it can never see whole at
-    eval time. 4 points/decade and <=20 DC steps keep the physics (the -3 dB
+    eval time. 4 points/decade and <=12 DC steps keep the physics (the -3 dB
     crossing and the sweep slope survive) and the whole vector visible.
 
     Halved again for v4: the v3 measurement found tool observations eating
@@ -151,7 +155,7 @@ def _compact_sweep(netlist: str) -> str:
 
     def widen_dc(m):
         head, start, stop, step = m.group(1), _num(m.group(2)), _num(m.group(3)), _num(m.group(4))
-        min_step = abs(stop - start) / 20.0
+        min_step = abs(stop - start) / 12.0
         if step >= min_step:
             return m.group(0)
         return f"{head}{m.group(2)} {m.group(3)} {min_step:g}"
@@ -187,7 +191,7 @@ M5 tail nbias 0 0 nch W=40u L=2u
 M3 d1 d1 vdd vdd pch W=40u L=1u
 M4 out d1 vdd vdd pch W=40u L=1u
 .dc Vinp 0.6 1.2 0.01
-.save v(out)
+.save v(out) i(vdd)
 .end
 """,
     },
@@ -213,7 +217,7 @@ M7 out nbias 0 0 nch W=30u L=2u
 Cc d2 out 2p
 CL out 0 5p
 .dc Vinp 0.85 0.95 0.001
-.save v(out)
+.save v(out) i(vdd)
 .end
 """,
     },
@@ -230,7 +234,7 @@ Q1 out b 0 xnpn
 R1 out b 40k
 R2 b 0 40k
 .dc temp -40 125 5
-.save v(out)
+.save v(out) i(vdd)
 .end
 """,
     },
@@ -247,7 +251,7 @@ Q1 c1 c1 0 xnpn
 Q2 c2 c1 0 xnpn
 Vout c2 0 DC 1.0
 .dc Vout 0.2 3.0 0.05
-.save i(vout)
+.save i(vout) i(vdd)
 .end
 """,
     },
@@ -269,7 +273,7 @@ M5 out n2 vdd vdd pch W=16u L=0.5u
 M6 out n2 0 0 nch W=8u L=0.5u
 CL out 0 50f
 .tran 0.05n 6n
-.save v(out)
+.save v(out) i(vdd)
 .end
 """,
     },
@@ -289,7 +293,7 @@ M2 out b vdd vdd pch W=4u L=0.5u
 M3 out a mid 0 nch W=4u L=0.5u
 M4 mid b 0 0 nch W=4u L=0.5u
 .dc Va 0 1.8 0.01
-.save v(out)
+.save v(out) i(vdd)
 .end
 """,
     },
@@ -311,7 +315,7 @@ RC_STEP = {
         "R1 in out 1k\n"
         "C1 out 0 1n\n"
         ".tran 0.2u 20u\n"
-        ".save v(out)\n"
+        ".save v(out) v(in)\n"
         ".end\n"
     ),
 }
